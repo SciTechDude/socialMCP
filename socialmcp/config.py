@@ -5,7 +5,7 @@ Resolution order (last wins):
     2. ./socialmcp.toml, or $SOCIALMCP_CONFIG
     3. SOCIALMCP_* environment variables
 
-MCP clients (Claude Desktop/Code, Cursor) launch the server with a bare env, so
+MCP clients generally launch the server with a bare environment, so
 every setting must be reachable through an env var as well as the TOML file.
 """
 

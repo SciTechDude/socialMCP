@@ -3,21 +3,23 @@
 **A local-first personal CRM for your professional network, delivered entirely as an MCP server.**
 
 No scraping. No cookies. No browser automation. No web UI. You drop the data
-export that LinkedIn already owes you into a folder, and your AI client — Claude
-Desktop, Claude Code, Cursor — becomes the interface to a searchable CRM that
-remembers how you met everyone.
+export that LinkedIn already owes you into a folder, and **any MCP client**
+becomes the interface to a searchable CRM that remembers how you met everyone.
 
 ```
-You:  Who did I meet at Seattle AI Week, and who haven't I followed up with?
+You:        Who did I meet at Seattle AI Week, and who haven't I followed up with?
 
-Claude:  7 people, 13-15 Oct. Four are still cold:
-         • Marcus Webb — Staff ML Engineer, Cascade Robotics
-           "Great meeting you at Seattle AI Week today!"
-         • Hana Suzuki — Director of Product, Elliott Bay Health
-         ...
-         Also: Priya Raghavan moved from Northwind AI to Aurora Labs as VP GTM
-         since your last export.
+Assistant:  7 people, 13-15 Oct. Four are still cold:
+            • Marcus Webb — Staff ML Engineer, Cascade Robotics
+              "Great meeting you at Seattle AI Week today!"
+            • Hana Suzuki — Director of Product, Elliott Bay Health
+            ...
+            Also: Priya Raghavan moved from Northwind AI to Aurora Labs as VP GTM
+            since your last export.
 ```
+
+*(Illustrative — the names above come from the synthetic fixtures in
+`tests/fixtures/`, not from anyone's real network.)*
 
 ## Why this exists
 
@@ -83,10 +85,16 @@ drop-archive/linkedin/
 That is the whole ingestion UX. The background harness notices the file, waits
 for the copy to finish, parses it, and files it away under `ingested/linkedin/`.
 
-## Connect it to your AI client
+## Connect it to any MCP client
 
-**Claude Desktop** — `~/Library/Application Support/Claude/claude_desktop_config.json`
-(macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+SocialMCP is a standard **stdio MCP server** with no client-specific code, so
+anything that speaks MCP can drive it. The whole integration is one command:
+
+```
+python /absolute/path/to/socialMCP/run.py
+```
+
+Most clients configure that as JSON in the now-conventional `mcpServers` shape:
 
 ```json
 {
@@ -99,15 +107,51 @@ for the copy to finish, parses it, and files it away under `ingested/linkedin/`.
 }
 ```
 
-**Claude Code**:
+Where that JSON goes, by client:
 
-```bash
-claude mcp add socialmcp -- python /absolute/path/to/socialMCP/run.py
+| Client | Location |
+|---|---|
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), `%APPDATA%\Claude\claude_desktop_config.json` (Windows) |
+| Claude Code | `claude mcp add socialmcp -- python /abs/path/run.py` |
+| Cursor | `.cursor/mcp.json` in the project, or `~/.cursor/mcp.json` globally |
+| VS Code (Copilot) | `.vscode/mcp.json`, under a `servers` key instead of `mcpServers` |
+| Zed | `context_servers` in `settings.json` |
+| Continue | `mcpServers` in `~/.continue/config.yaml` |
+| Windsurf, Cline, LibreChat, Goose, … | their own MCP config file, same command |
+| Your own code | `mcp` SDK (Python/TS), Pydantic-AI, LangChain MCP adapters, … |
+
+Check your client's docs for the exact key name — the command and args never
+change. Restart the client afterwards, then ask it to call
+`get_network_briefing`.
+
+If a client won't start the server, run `python run.py stats` first: that
+exercises the same database and config without the protocol in the way.
+
+### Verifying it from your own script
+
+No AI client needed to confirm the server works — this is the reference client
+from the `mcp` SDK:
+
+```python
+import asyncio
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def main():
+    params = StdioServerParameters(command="python", args=["/abs/path/to/socialMCP/run.py"])
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            print([t.name for t in (await session.list_tools()).tools])
+            print((await session.call_tool("network_stats", {})).content[0].text)
+
+asyncio.run(main())
 ```
 
-Then restart the client and ask it to call `get_network_briefing`.
+`tests/test_mcp_protocol.py` is this same flow as a test, so client-neutral
+compatibility is enforced on every CI run rather than assumed.
 
-## What the AI can do
+## What any MCP client can do
 
 | Tool | Purpose |
 |---|---|
@@ -243,8 +287,8 @@ pytest              # 63 tests, no network access required
 ruff check .
 ```
 
-Fixtures in `tests/fixtures/linkedin/` are a fully anonymized export that
-reproduces every quirk above. Use them instead of your real data.
+Fixtures in `tests/fixtures/linkedin/` are a hand-written, fully synthetic
+export that reproduces every quirk above. Use them instead of your real data.
 
 ## Roadmap
 

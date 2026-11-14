@@ -1,8 +1,8 @@
 """The MCP server: SocialMCP's entire user interface.
 
 There is no SPA, no REST API and no listening socket — the server speaks MCP
-over stdio to whatever client launched it (Claude Desktop/Code, Cursor), and the
-chat window *is* the database view.
+over stdio to whatever MCP client launched it, and that client's chat window
+*is* the database view.
 
 Tool design rules followed here:
   * Every tool returns plain JSON-able dicts, never prose. The model narrates.
