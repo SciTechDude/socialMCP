@@ -1,0 +1,15 @@
+﻿"Notes:"
+"When exporting your connection data, you may notice that some of your connections' email addresses are not included."
+"This is because those members chose not to share their email addresses with their connections."
+
+First Name,Last Name,URL,Email Address,Company,Position,Connected On
+Priya,Raghavan,https://www.linkedin.com/in/priya-raghavan-ai/,priya@example.com,Northwind AI,Head of GTM,13 Oct 2025
+Marcus,Webb,https://www.linkedin.com/in/marcuswebb/,,Cascade Robotics,Staff ML Engineer,13 Oct 2025
+Dana,Olufemi,https://www.linkedin.com/in/dana-olufemi/,dana.o@example.com,Rainier Data,Enterprise AI Sales Lead,14 Oct 2025
+Tomas,Lindqvist,https://www.linkedin.com/in/tomaslindqvist/,,Fjord Compute,Founder,14 Oct 2025
+Hana,Suzuki,https://www.linkedin.com/in/hana-suzuki-pm/,,Elliott Bay Health,Director of Product,15 Oct 2025
+Ben,Kowalski,https://www.linkedin.com/in/benkowalski/,,Pike Place Capital,Principal,15 Oct 2025
+Ingrid,Novak,,ingrid.novak@example.com,Sound Transit Labs,Data Engineer,15 Oct 2025
+Luis,Ferreira,https://www.linkedin.com/in/luisferreira/,,Harborview Systems,VP Engineering,02 Mar 2025
+Aisha,Bello,https://www.linkedin.com/in/aishabello/,,Emerald City Bio,Computational Biologist,17 Jun 2025
+Oscar,Mendes,https://www.linkedin.com/in/oscarmendes/,,Ballard Metals,Plant Manager,not a date

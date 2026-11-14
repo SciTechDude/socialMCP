@@ -1,0 +1,50 @@
+# SocialMCP configuration. Copy to socialmcp.toml and edit.
+# Every value can also be set with an environment variable (shown in comments),
+# which is how MCP clients like Claude Desktop usually configure the server.
+
+# Where the database and defaults live.          env: SOCIALMCP_HOME
+# home = "~/.socialmcp"
+
+# The SQLite file holding your CRM.              env: SOCIALMCP_DB
+# db_path = "~/.socialmcp/socialmcp.db"
+
+# The drop zone. Put LinkedIn exports in drop-archive/linkedin/.
+# Defaults to ./drop-archive in a source checkout.  env: SOCIALMCP_DROP_DIR
+# drop_dir = "./drop-archive"
+
+# Where processed archives are filed (subfolders mirrored).  env: SOCIALMCP_ARCHIVE_DIR
+# archive_dir = "./ingested"
+
+# Watch the drop zone in the background while the server runs. env: SOCIALMCP_AUTO_INGEST
+auto_ingest = true
+
+# Create drop-archive/linkedin/ automatically on startup.
+create_source_dirs = true
+
+# Max contacts returned by a search when the caller doesn't say.
+max_results = 25
+
+
+[embedding]
+# "ollama" keeps everything on your machine (recommended and the default).
+# "openai" sends contact text to a third party — opt in deliberately.
+# "none"   disables semantic search; keyword search still works fully.
+provider = "ollama"                      # env: SOCIALMCP_EMBED_PROVIDER
+model = "nomic-embed-text"               # env: SOCIALMCP_EMBED_MODEL
+dim = 768                                # env: SOCIALMCP_EMBED_DIM  (must match the model!)
+ollama_url = "http://127.0.0.1:11434"    # env: SOCIALMCP_OLLAMA_URL
+batch_size = 16
+timeout_seconds = 30.0
+
+# For provider = "openai":
+# model = "text-embedding-3-small"
+# dim = 1536
+# api_key_env = "OPENAI_API_KEY"          # the key is read from the environment, never stored here
+
+
+[cluster]
+# Event detection: a burst of connections within a few days is an event.
+# Raise min_contacts if normal weeks are being flagged as conferences.
+max_gap_days = 2      # a longer gap ends the burst
+max_span_days = 5     # a burst never spans more than this
+min_contacts = 5      # fewer than this is not an event
