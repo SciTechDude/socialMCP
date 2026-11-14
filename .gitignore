@@ -1,0 +1,71 @@
+# ---------------------------------------------------------------------------
+# Secrets and credentials — NEVER commit these.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.token
+*token*.txt
+*.pem
+*.key
+*.p12
+secrets.*
+.secrets/
+.netrc
+.git-credentials
+gh-token*
+github-token*
+*_credentials.json
+.claude/settings.local.json
+
+# ---------------------------------------------------------------------------
+# Personal data — the whole point of this project is that it never leaves the
+# machine. Exports, the SQLite CRM, and the drop folder stay local.
+# ---------------------------------------------------------------------------
+# The drop-zone folder structure is committed (.gitkeep); its contents are not.
+drop-archive/**/*.zip
+drop-archive/**/*.csv
+drop-archive/**/*.json
+drop-archive/**/README.md
+ingested/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+Connections.csv
+Invitations.csv
+messages.csv
+Profile.csv
+Basic_LinkedInDataExport*.zip
+*LinkedInDataExport*.zip
+!tests/fixtures/**/*.csv
+
+# Local config may contain API keys / absolute paths
+socialmcp.toml
+!socialmcp.example.toml
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp

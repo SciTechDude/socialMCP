@@ -1,0 +1,264 @@
+# SocialMCP
+
+**A local-first personal CRM for your professional network, delivered entirely as an MCP server.**
+
+No scraping. No cookies. No browser automation. No web UI. You drop the data
+export that LinkedIn already owes you into a folder, and your AI client — Claude
+Desktop, Claude Code, Cursor — becomes the interface to a searchable CRM that
+remembers how you met everyone.
+
+```
+You:  Who did I meet at Seattle AI Week, and who haven't I followed up with?
+
+Claude:  7 people, 13-15 Oct. Four are still cold:
+         • Marcus Webb — Staff ML Engineer, Cascade Robotics
+           "Great meeting you at Seattle AI Week today!"
+         • Hana Suzuki — Director of Product, Elliott Bay Health
+         ...
+         Also: Priya Raghavan moved from Northwind AI to Aurora Labs as VP GTM
+         since your last export.
+```
+
+## Why this exists
+
+Networking at a fast-paced event creates a memory gap: three days later you have
+forty new connections and no idea which conversation went with which name.
+LinkedIn used to let you tag and annotate connections privately — that is now
+behind Sales Navigator.
+
+The workaround most people already use by hand:
+
+1. A QR code on your lock screen so people can scan instead of typing.
+2. A clipboard template in the connection invite — *"Great meeting you at
+   Seattle AI Week today!"*
+
+That second habit is the key. Your official LinkedIn data export contains
+`Invitations.csv`, and **the `Message` column preserves exactly what you pasted,
+with a timestamp**. That is a dated, venue-stamped note about how you met every
+single person — already written, just never surfaced. SocialMCP extracts it,
+clusters the connections into the events they came from, and makes the whole
+thing queryable in natural language.
+
+## Principles
+
+| | |
+|---|---|
+| **MCP-first, headless** | No SPA, no REST API, no listening socket. The chat window is the UI. |
+| **Zero scraping, ToS-compliant** | Only user-owned GDPR/CCPA export files. Never a session cookie, headless browser, or live API call against a social network. |
+| **Local-first privacy** | Contacts and DM history live in one SQLite file on your machine. Embeddings default to local Ollama. Cloud LLM keys are strictly opt-in. |
+| **Contributor-extensible** | New sources are one module implementing `BaseAdapter`. No schema changes. |
+
+## Install
+
+Requires Python 3.11+.
+
+```bash
+git clone https://github.com/SciTechDude/socialMCP.git
+cd socialMCP
+pip install -e ".[dev]"
+```
+
+Optional, for semantic search (recommended):
+
+```bash
+# sqlite-vec comes with the install; you also need a local embedding model
+ollama pull nomic-embed-text
+```
+
+Without Ollama, SocialMCP runs fine — search falls back to SQLite FTS5 keyword
+matching plus exact filters.
+
+## Get your data
+
+LinkedIn → **Settings & Privacy → Data Privacy → Get a copy of your data** →
+request the **larger archive** (it is the one with `Invitations.csv` and
+`messages.csv`). It arrives by email in minutes to 24 hours.
+
+Drop the `.zip` — unopened, as downloaded — into:
+
+```
+drop-archive/linkedin/
+```
+
+That is the whole ingestion UX. The background harness notices the file, waits
+for the copy to finish, parses it, and files it away under `ingested/linkedin/`.
+
+## Connect it to your AI client
+
+**Claude Desktop** — `~/Library/Application Support/Claude/claude_desktop_config.json`
+(macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "socialmcp": {
+      "command": "python",
+      "args": ["/absolute/path/to/socialMCP/run.py"]
+    }
+  }
+}
+```
+
+**Claude Code**:
+
+```bash
+claude mcp add socialmcp -- python /absolute/path/to/socialMCP/run.py
+```
+
+Then restart the client and ask it to call `get_network_briefing`.
+
+## What the AI can do
+
+| Tool | Purpose |
+|---|---|
+| `search_network` | Hybrid semantic + keyword search with structured filters (company, title, status, event, date range). |
+| `get_event_cluster` | Everyone connected during one event window, with their invite notes and who is still un-followed-up. |
+| `get_contact` | One person's full record: invite note, DMs, your notes, job changes. |
+| `log_contact_note` | Append a timestamped private note. |
+| `list_pending_invitations` | Invites you sent that were never accepted — your follow-up list. |
+| `rename_event_cluster` | Turn `"13-15 Oct 2025 burst (7 connections)"` into `"Seattle AI Week 2025"`. |
+| `trigger_archive_ingest` | Ingest on demand instead of waiting for the watcher. |
+| `list_event_clusters`, `network_stats`, `reindex_embeddings`, `get_network_briefing` | Housekeeping and session priming. |
+
+Resources: `socialmcp://briefing`, `socialmcp://stats`, `socialmcp://clusters`,
+`socialmcp://adapters`.
+
+## Also usable without an AI client
+
+```bash
+python run.py ingest                                   # process the drop zone now
+python run.py search "enterprise AI sales" --limit 5
+python run.py search "" --event seattle-ai-week-2025
+python run.py clusters
+python run.py briefing
+python run.py watch                                    # harness only, foreground
+python run.py                                          # MCP server over stdio
+```
+
+## How it works
+
+```
+drop-archive/linkedin/export.zip
+        │
+        ▼
+  core/harness.py ──── watchdog + debounce (never reads a half-copied zip)
+        │
+        ▼
+  core/ingest.py ───── safe extract → sha256 dedupe → adapter → merge → upsert
+        │                                                  │
+        │                                     adapters/linkedin/adapter.py
+        │                                     (CSV quirks live here, only here)
+        ▼
+  SQLite: contacts, interactions, contact_history, event_clusters,
+          contact_identities, harness_events, contacts_fts, vec_contacts
+        │
+        ├── core/clustering.py  deterministic event detection
+        ├── core/search.py      FTS5 + sqlite-vec fused with RRF
+        └── mcp_server/server.py  the only thing the model talks to
+```
+
+### Repository layout
+
+```
+socialMCP/
+├── run.py                        # entry point: MCP server, or CLI subcommands
+├── drop-archive/linkedin/        # ← drop LinkedIn .zip exports here
+├── ingested/                     # processed archives, structure mirrored
+├── socialmcp/
+│   ├── config.py                 # TOML + env config, drop-zone routing
+│   ├── cli.py
+│   ├── core/
+│   │   ├── schema.sql            # the full data model, commented
+│   │   ├── db.py                 # connection, migrations, sqlite-vec loading
+│   │   ├── models.py             # the records every adapter emits
+│   │   ├── normalize.py          # URL/date/name canonicalization
+│   │   ├── ingest.py             # extract → merge → upsert → history
+│   │   ├── clustering.py         # temporal event detection
+│   │   ├── search.py             # hybrid search + RRF fusion
+│   │   ├── embeddings.py         # Ollama / OpenAI / none
+│   │   └── harness.py            # watcher, activity log, briefing
+│   ├── adapters/
+│   │   ├── base.py               # BaseAdapter + CSV header-detection helpers
+│   │   └── linkedin/adapter.py   # v1 adapter
+│   └── mcp_server/server.py      # FastMCP tools and resources
+└── tests/                        # 63 tests, anonymized fixtures, no network
+```
+
+### The LinkedIn quirks it handles
+
+These are the things that break naive parsers, all covered by tests:
+
+- **Multi-line preamble.** `Connections.csv` opens with a human-readable
+  "Notes:" disclaimer. The line count has changed between export vintages, so
+  the parser scans for the first row containing the real headers instead of
+  skipping a hard-coded three lines.
+- **UTF-8 BOM** glued to the first header cell.
+- **Header drift.** `Direction` is absent in older `Invitations.csv`; profile-URL
+  columns appear in camelCase when they appear at all. Headers are normalized
+  (`SENDER PROFILE URL` → `sender_profile_url`) rather than matched literally.
+- **Invitations have no profile URL.** The same person therefore arrives as
+  `in/jane-doe` from Connections and `name/jane-doe` from Invitations. These are
+  merged — otherwise your clipboard note ends up orphaned on a phantom "pending"
+  duplicate. The merge refuses to fire when a name is ambiguous.
+- **Opaque member URNs.** `messages.csv` uses `/in/ACoAAB…` URLs that never match
+  the vanity slugs in `Connections.csv`, so DMs are matched through an alias
+  table (URL → email → unambiguous name).
+- **Dates everywhere.** `"13 Oct 2025"`, `"10/13/25, 6:42 PM"`,
+  `"2025-10-20 17:04:11 UTC"`, bare epochs. One bad date warns and keeps going.
+- **Monthly re-drops.** Archives are deduped by SHA-256; overlapping rows are
+  idempotent; a changed company or title is written to `contact_history` so you
+  can see who moved.
+- **Untrusted zips.** Extraction rejects path traversal (`../`) and absurd
+  compression ratios. Exports are downloaded files, not trusted input.
+
+### Event clustering
+
+A greedy pass over connection dates: extend a burst while each gap is ≤
+`max_gap_days` (2) and the total span stays ≤ `max_span_days` (5); emit it if it
+holds ≥ `min_contacts` (5) people. Fifteen connections over a conference weekend
+becomes one cluster; one connection a week never does. Tunable in
+`socialmcp.toml`. Clusters you rename are never renamed back.
+
+### Search
+
+Keyword (FTS5, BM25-weighted toward names and invite notes) and semantic
+(sqlite-vec cosine) rankings are fused with Reciprocal Rank Fusion, so
+`"GTM background"` works without keyword overlap and `"Stripe"` still ranks the
+literal match first. Structured filters are plain SQL predicates applied before
+fusion — exact, never approximate.
+
+## Privacy
+
+Everything is a local file. The server speaks stdio to its parent process and
+opens no network socket. The only outbound requests SocialMCP can make are to
+your configured embedding provider — `127.0.0.1:11434` by default — and nothing
+at all if you set `provider = "none"`. `.gitignore` blocks exports, the
+database, and local config so you cannot accidentally commit your network.
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+pytest              # 63 tests, no network access required
+ruff check .
+```
+
+Fixtures in `tests/fixtures/linkedin/` are a fully anonymized export that
+reproduces every quirk above. Use them instead of your real data.
+
+## Roadmap
+
+- **Phase 1 & 2 (done):** schema, hardened ingest pipeline, LinkedIn adapter,
+  event clustering, harness, MCP tools and resources.
+- **Phase 3:** more adapters (Instagram/Facebook JSON, X archives, vCard/CSV),
+  richer follow-up prompting, optional recurring reminders.
+
+Adapters are the easiest place to contribute — one module, no schema change.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
+
+Apache-2.0 rather than MIT for the explicit patent grant and because its
+contribution clause means contributors don't need to sign a separate CLA.
