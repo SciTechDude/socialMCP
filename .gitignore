@@ -27,7 +27,7 @@ drop-archive/**/*.zip
 drop-archive/**/*.csv
 drop-archive/**/*.json
 drop-archive/**/README.md
-ingested/
+ingested
 *.db
 *.db-wal
 *.db-shm
@@ -66,11 +66,14 @@ __pycache__/
 # version tags, changelogs and download counts for free. The build scripts
 # themselves ARE committed, so anyone can reproduce the installer from source
 # and verify it matches — which matters for a tool that reads private data.
-build/
-dist/
+# No trailing slashes, for the same reason as the venv rules below: git cannot
+# tell that a path which does not exist yet is a directory, so a dir-only
+# pattern silently fails to match in a fresh clone — which is where it matters.
+build
+dist
 *.dmg
 *.pkg
-*.app/
+*.app
 .venv
 .venv-*
 venv

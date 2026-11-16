@@ -1,0 +1,109 @@
+name: Release
+
+# Builds the macOS app for both architectures and attaches them to a release.
+#
+# This exists because one machine cannot build both: PyInstaller bundles the
+# interpreter it runs under and cannot retarget, and universal2 is unavailable
+# because some dependencies publish single-arch wheels only. GitHub's runners
+# give us one Mac of each kind, so a release stops depending on who has which
+# laptop.
+#
+# Signing is deliberately not done here. Shipping a Developer ID certificate to
+# CI means putting a private key in repository secrets; until that trade is
+# made consciously, release builds are signed and notarized locally by the
+# maintainer. The artifacts below are therefore UNSIGNED and will be refused by
+# Gatekeeper — useful for testing, not for publishing.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to attach artifacts to (leave blank for a draft)"
+        required: false
+
+permissions:
+  contents: write # needed to create a release and upload assets
+
+jobs:
+  build:
+    name: ${{ matrix.label }} (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13 # Intel
+            arch: x86_64
+            label: Intel
+          - runner: macos-14 # Apple Silicon
+            arch: arm64
+            label: Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Confirm the runner is the architecture we think it is
+        # A silently-wrong runner would produce a file named for one
+        # architecture containing another, which is worse than no file.
+        run: |
+          actual="$(uname -m)"
+          echo "runner reports: $actual, expected ${{ matrix.arch }}"
+          test "$actual" = "${{ matrix.arch }}"
+
+      - name: Build
+        run: ./packaging/macos/build.sh --arch ${{ matrix.arch }}
+
+      - name: Verify the bundle runs with no environment
+        # The whole claim of the bundle is that the target Mac needs no Python.
+        # `env -i` strips PATH and PYTHONPATH so a bundle that only works
+        # because of the runner's environment fails here instead of on a user's
+        # machine.
+        run: |
+          BIN="dist/${{ matrix.arch }}/SocialMCP.app/Contents/MacOS/SocialMCP"
+          env -i HOME="$HOME" "$BIN" --log-level ERROR doctor | tee /tmp/doctor.txt
+          grep -q "SocialMCP check-up" /tmp/doctor.txt
+          grep -q "Smart search (sqlite-vec)      installed" /tmp/doctor.txt
+
+      - name: Verify the architecture of the built binary
+        run: |
+          lipo -archs "dist/${{ matrix.arch }}/SocialMCP.app/Contents/MacOS/SocialMCP" \
+            | tee /tmp/archs.txt
+          grep -q "${{ matrix.arch }}" /tmp/archs.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SocialMCP-${{ matrix.arch }}
+          path: dist/SocialMCP-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
+  publish:
+    name: Attach to release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la artifacts
+          # Drafted rather than published: the assets are unsigned, and the
+          # maintainer replaces them with signed builds before release.
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "SocialMCP ${GITHUB_REF_NAME}" \
+            --draft \
+            --notes "Download **SocialMCP-arm64.dmg** for Apple Silicon Macs (M1/M2/M3/M4) or **SocialMCP-x86_64.dmg** for Intel Macs. Not sure which you have?  menu → About This Mac.
+
+          These CI artifacts are unsigned and will be refused by Gatekeeper; signed builds replace them before publishing." \
+            artifacts/*.dmg

@@ -1,0 +1,29 @@
+# Dependency updates, as pull requests.
+#
+# The reason this is here: the MCP SDK's 2.0 release renamed FastMCP to
+# MCPServer, and because the dependency was unpinned at the top end, the first
+# person to install fresh got a crash at import. Nobody saw it until someone
+# built from a clean environment. A Dependabot PR plus the CI matrix turns that
+# class of break into a failing check on a branch instead of a broken install
+# for a stranger.
+
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Dev tooling moves often and rarely breaks users; one PR is enough.
+      dev-tools:
+        patterns: ["pytest*", "ruff", "pyinstaller*"]
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
