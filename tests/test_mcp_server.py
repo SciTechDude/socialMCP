@@ -69,7 +69,19 @@ def test_event_cluster_tool_lists_people_and_followups(server_state):
     detail = srv.get_event_cluster(clusters[0]["slug"])
     assert detail["cluster"]["contact_count"] == 9
     assert len(detail["contacts"]) == 9
-    assert "Marcus Webb" in detail["not_followed_up"]
+
+    # Two distinct follow-up problems, reported separately. Marcus is a
+    # first-degree connection who has never been messaged; Rafael and Yuki are
+    # not connected at all. Flattening these into one list is the bug this
+    # structure exists to prevent.
+    follow_up = detail["follow_up_needed"]
+    assert "Marcus Webb" in follow_up["connected_but_never_messaged"]
+    assert "Marcus Webb" not in follow_up["invite_unanswered"]
+    assert set(follow_up["invite_unanswered"]) == {"Rafael Santos", "Yuki Tanaka"}
+    assert all(
+        name in detail["first_degree_connections"]
+        for name in follow_up["connected_but_never_messaged"]
+    )
 
 
 def test_note_tool_round_trips_by_name(server_state):

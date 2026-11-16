@@ -68,6 +68,10 @@ How to work with it:
 * Event clusters are auto-detected bursts of connections. New ones have
   placeholder names like "12-15 Oct 2025 burst (17 connections)" — if the user
   tells you what that event was, call `rename_event_cluster`.
+* `follow_up_needed` on an event is already split into
+  `connected_but_never_messaged` and `invite_unanswered`. Report them as two
+  groups; collapsing them into one list misrepresents connected people as
+  strangers.
 * Two different facts, never conflate them:
     - `degree`: '1st' means a first-degree connection. '2nd+' means they are
       absent from Connections.csv, so they are 2nd degree or further - an
@@ -165,6 +169,11 @@ def search_network(
         has_note: True to return only contacts that have an origin note or logged notes.
         mode: 'hybrid' (default), 'keyword', or 'semantic'.
         limit: Max contacts to return (1-200).
+
+    Each contact carries `degree` ('1st' = connected, '2nd+' = an invitation is
+    outstanding) and `how` (who approached whom). A first-degree connection the
+    user has never messaged is the normal case after a conference - do not
+    describe those people as unconnected.
     """
     st = state()
     filters = SearchFilters(
@@ -248,7 +257,6 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
         (cluster["id"], max(1, min(limit, 500))),
     )
     contacts = describe_rows([dict(r) for r in rows])
-    never_accepted = [c["full_name"] for c in contacts if c["status"] in {"pending", "received"}]
     by_category: dict[str, list[str]] = {}
     for contact in contacts:
         by_category.setdefault(contact["how"], []).append(contact["full_name"])
@@ -266,8 +274,22 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
         },
         "returned": len(contacts),
         "contacts": contacts,
-        "not_followed_up": [c["full_name"] for c in contacts if not c["followed_up"]],
-        "invitation_never_accepted": never_accepted,
+        # Split deliberately: a flat "not followed up" list invites the
+        # conclusion that these people are not connected, when almost all of
+        # them are first-degree connections who simply have not been messaged.
+        # Those are two different follow-up problems with two different fixes
+        # (send a message vs. get the invitation accepted), so the tool reports
+        # them separately rather than leaving a reader to recombine them.
+        "follow_up_needed": {
+            "connected_but_never_messaged": [
+                c["full_name"]
+                for c in contacts
+                if c["degree"] == "1st" and not c["followed_up"]
+            ],
+            "invite_unanswered": [
+                c["full_name"] for c in contacts if c["degree"] != "1st"
+            ],
+        },
         "relationships": relationship_breakdown(contacts),
         "names_by_relationship": by_category,
         "first_degree_connections": first_degree,
