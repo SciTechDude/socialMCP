@@ -194,3 +194,89 @@ def test_launch_command_prefers_the_script_beside_the_interpreter(
 
     assert launch.command == str(script)
     assert launch.args == []
+
+
+# ---------------------------------------------------------------------------
+# uninstall
+# ---------------------------------------------------------------------------
+
+
+def test_unregister_removes_only_our_entry(target: ClientTarget):
+    """The destructive failure mode in reverse: deleting someone else's servers."""
+    from socialmcp.clients import unregister_client
+
+    target.config_path.parent.mkdir(parents=True)
+    target.config_path.write_text(
+        json.dumps(
+            {
+                "theme": "dark",
+                "mcpServers": {
+                    "github": {"command": "gh-mcp"},
+                    SERVER_KEY: {"command": "/old/path"},
+                },
+            }
+        )
+    )
+
+    result = unregister_client(target)
+
+    assert result.status == "removed"
+    assert result.backup, "a config we modify must be backed up"
+    config = read(target)
+    assert SERVER_KEY not in config["mcpServers"]
+    assert config["mcpServers"]["github"] == {"command": "gh-mcp"}
+    assert config["theme"] == "dark"
+
+
+def test_unregister_is_a_noop_when_not_registered(target: ClientTarget):
+    from socialmcp.clients import unregister_client
+
+    assert unregister_client(target).status == "absent"
+
+    target.config_path.parent.mkdir(parents=True)
+    target.config_path.write_text(json.dumps({"mcpServers": {"github": {"command": "gh-mcp"}}}))
+    result = unregister_client(target)
+    assert result.status == "absent"
+    assert not result.backup, "a no-op must not leave backup files behind"
+    assert read(target)["mcpServers"]["github"] == {"command": "gh-mcp"}
+
+
+def test_unregister_leaves_broken_json_untouched(target: ClientTarget):
+    """Never rewrite a file we cannot parse — that is how a client stops starting."""
+    from socialmcp.clients import unregister_client
+
+    target.config_path.parent.mkdir(parents=True)
+    target.config_path.write_text("{ not json")
+
+    result = unregister_client(target)
+
+    assert result.status == "failed"
+    assert "left untouched" in result.detail
+    assert target.config_path.read_text() == "{ not json"
+
+
+def test_unregister_dry_run_changes_nothing(target: ClientTarget):
+    from socialmcp.clients import unregister_client
+
+    target.config_path.parent.mkdir(parents=True)
+    original = json.dumps({"mcpServers": {SERVER_KEY: {"command": "x"}}})
+    target.config_path.write_text(original)
+
+    result = unregister_client(target, dry_run=True)
+
+    assert result.status == "would_remove"
+    assert target.config_path.read_text() == original
+
+
+def test_setup_then_unregister_round_trips(target: ClientTarget):
+    """Uninstall must return the file to the state setup found it in."""
+    from socialmcp.clients import configure_client, unregister_client
+
+    target.config_path.parent.mkdir(parents=True)
+    before = json.dumps({"mcpServers": {"other": {"command": "x"}}}, indent=2) + "\n"
+    target.config_path.write_text(before)
+
+    configure_client(target, LAUNCH)
+    unregister_client(target)
+
+    assert json.loads(target.config_path.read_text()) == json.loads(before)

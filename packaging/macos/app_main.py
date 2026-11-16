@@ -156,6 +156,11 @@ def build_setup_report(results, drop_folder: Path, *, embeddings: bool) -> tuple
         ]
         buttons.append("Get Ollama")
 
+    # Offered only when there is something to disconnect. A user who will
+    # never open a terminal still needs a way out, and the app's second launch
+    # is the only place they will look.
+    if connected and not blocked:
+        buttons.append("Disconnect")
     buttons.append("Open the folder")
     return "\n".join(lines), tuple(buttons)
 
@@ -210,10 +215,67 @@ def setup_flow() -> int:
         )
         choice = dialog(message, buttons=tuple(b for b in buttons if b != "Replace it"))
 
+    if choice == "Disconnect":
+        return disconnect_flow(config)
+
     if choice == "Get Ollama":
         subprocess.run(["open", "https://ollama.com"], check=False, timeout=30)
 
     reveal(drop)
+    return 0
+
+
+def disconnect_flow(config) -> int:
+    """Remove SocialMCP from the AI apps, and ask separately about the data.
+
+    Kept as two questions on purpose. Disconnecting is reversible — opening the
+    app again undoes it. Deleting the database is not: the notes the user wrote
+    and the event names they chose are not in any export and cannot be
+    recovered from one.
+    """
+    from socialmcp.clients import unregister_all
+
+    results = unregister_all()
+    removed = [r for r in results if r.status == "removed"]
+
+    data_paths = [p for p in (config.db_path, config.drop_dir, config.archive_dir) if p.exists()]
+    summary = [f"Disconnected from: {', '.join(r.client for r in removed) or 'nothing'}", ""]
+    summary += ["Restart those apps to finish.", ""]
+    if data_paths:
+        summary += [
+            "Your data is still on this Mac:",
+            *[f"   {p}" for p in data_paths],
+            "",
+            "Keeping it means reconnecting later picks up exactly where you left off.",
+            "Deleting it also removes the notes you wrote and the event names you",
+            "chose, which no new export can bring back.",
+        ]
+    summary += ["", "To remove the app itself, drag SocialMCP to the Trash."]
+
+    buttons: tuple[str, ...] = ("Delete my data", "Keep my data") if data_paths else ("OK",)
+    if dialog("\n".join(summary), buttons=buttons) != "Delete my data":
+        return 0
+
+    confirmed = dialog(
+        "Delete the database, drop folder and processed archives?\n\n"
+        "This cannot be undone.",
+        buttons=("Cancel", "Delete"),
+    )
+    if confirmed != "Delete":
+        return 0
+
+    import shutil as _shutil
+
+    for path in data_paths:
+        try:
+            _shutil.rmtree(path) if path.is_dir() else path.unlink()
+            for suffix in ("-wal", "-shm"):
+                sidecar = path.with_name(path.name + suffix)
+                if sidecar.exists():
+                    sidecar.unlink()
+        except OSError:
+            pass
+    dialog("Your SocialMCP data has been deleted.\n\nDrag the app to the Trash to finish.")
     return 0
 
 

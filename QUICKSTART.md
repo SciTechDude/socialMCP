@@ -168,6 +168,29 @@ Common issues:
 
 ---
 
+## Removing it
+
+**Disconnect it from your AI apps** — open SocialMCP again and click
+**Disconnect**. Your data stays, so reconnecting later resumes exactly where you
+left off. (From a terminal: `socialmcp uninstall`.)
+
+**Delete everything** — after disconnecting, choose **Delete my data**. That
+removes the database, the drop folder and processed archives. Your own notes and
+the event names you chose are *not* in any LinkedIn export, so they cannot be
+recovered afterwards.
+
+**Remove the app** — drag SocialMCP from Applications to the Trash.
+
+Nothing else is left behind. SocialMCP only ever writes to two places: its own
+folder in `~/Library/Application Support/SocialMCP`, and your AI apps' settings
+files (merged, never overwritten, and backed up before each change).
+
+### If the install went wrong
+
+Because it is a plain app and not a system installer, there is nothing to
+repair: drag SocialMCP to the Trash and drag it across again from the download.
+Replacing the app never touches your data or your AI apps' settings.
+
 ## Optional: better search
 
 Out of the box, search matches words. Install [Ollama](https://ollama.com) (free,

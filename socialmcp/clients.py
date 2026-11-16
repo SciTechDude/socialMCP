@@ -315,6 +315,92 @@ def _configure_via_claude_cli(
     return SetupResult(target.display_name, "configured", target.notes, "claude mcp")
 
 
+def unregister_client(target: ClientTarget, *, dry_run: bool = False) -> SetupResult:
+    """Remove only our own entry from one client's config.
+
+    The mirror image of configure_client, and held to the same rule: touch
+    nothing we did not create. The socialmcp key is deleted and everything else
+    in the file — other MCP servers, unrelated settings — is written back
+    unchanged, with a backup taken first.
+
+    An empty `mcpServers` map is left in place rather than removed, because its
+    presence may be what the client expects and its absence is not ours to
+    decide.
+    """
+    if target.key == "claude-code" and shutil.which("claude"):
+        if dry_run:
+            return SetupResult(target.display_name, "would_remove", "claude mcp remove", "claude mcp")
+        result = subprocess.run(
+            ["claude", "mcp", "remove", SERVER_KEY, "-s", "user"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            if "not found" in detail.lower() or "no mcp server" in detail.lower():
+                return SetupResult(target.display_name, "absent", "was not registered", "claude mcp")
+            return SetupResult(target.display_name, "failed", detail[:300], "claude mcp")
+        return SetupResult(target.display_name, "removed", "", "claude mcp")
+
+    if not target.config_path.is_file():
+        return SetupResult(target.display_name, "absent", "no config file", str(target.config_path))
+
+    try:
+        config = _read_json(target.config_path)
+    except json.JSONDecodeError as exc:
+        return SetupResult(
+            target.display_name,
+            "failed",
+            f"its config file is not valid JSON ({exc}); left untouched",
+            str(target.config_path),
+        )
+
+    servers = config.get(target.servers_key)
+    if not isinstance(servers, dict) or SERVER_KEY not in servers:
+        return SetupResult(
+            target.display_name, "absent", "was not registered", str(target.config_path)
+        )
+    if dry_run:
+        return SetupResult(
+            target.display_name, "would_remove", "would be removed", str(target.config_path)
+        )
+
+    backup = backup_file(target.config_path)
+    del servers[SERVER_KEY]
+    config[target.servers_key] = servers
+    temp = target.config_path.with_suffix(target.config_path.suffix + ".socialmcp-tmp")
+    temp.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    temp.replace(target.config_path)
+    return SetupResult(
+        target.display_name,
+        "removed",
+        target.notes,
+        str(target.config_path),
+        str(backup) if backup else "",
+    )
+
+
+def unregister_all(
+    *, only: list[str] | None = None, dry_run: bool = False
+) -> list[SetupResult]:
+    """Unregister from every client, including ones not currently installed.
+
+    Unlike setup, this does not skip uninstalled clients: an app the user has
+    since deleted may still hold a config file pointing at us, and leaving that
+    behind is exactly the mess an uninstall is supposed to prevent.
+    """
+    results: list[SetupResult] = []
+    for target in known_clients():
+        if only and target.key not in only:
+            continue
+        result = unregister_client(target, dry_run=dry_run)
+        if result.status != "absent" or only:
+            results.append(result)
+    return results
+
+
 def setup_all(
     *,
     only: list[str] | None = None,

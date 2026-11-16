@@ -330,6 +330,23 @@ Keyword (FTS5, BM25-weighted toward names and invite notes) and semantic
 literal match first. Structured filters are plain SQL predicates applied before
 fusion — exact, never approximate.
 
+## Removing it
+
+```bash
+socialmcp uninstall              # disconnect from AI apps; data kept
+socialmcp uninstall --dry-run    # show exactly what would change
+socialmcp uninstall --purge-data # also delete the database and folders
+```
+
+Mac app users can click **Disconnect** on the app's second launch instead.
+
+Uninstall is the mirror of setup and holds to the same rule: it deletes only
+the `socialmcp` entry it created, leaves other MCP servers and unrelated
+settings alone, backs up every file it edits, and refuses to rewrite a config
+file it cannot parse. Your data is never deleted unless you ask for it
+explicitly — notes and event names exist nowhere else and no fresh export
+restores them.
+
 ## Privacy
 
 Everything is a local file. The server speaks stdio to its parent process and
