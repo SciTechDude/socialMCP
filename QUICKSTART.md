@@ -41,8 +41,16 @@ up to 24 hours. Carry on with Step 2 while you wait.
 **On a Mac, this is one download.**
 
 1. [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases/latest)
-   (pick the file matching your Mac — *Apple Silicon* for M1/M2/M3/M4,
-   *Intel* otherwise; if unsure, click the Apple menu → About This Mac).
+   — **there are two files, and you need the right one:**
+
+   - `SocialMCP-arm64.dmg` if your Mac has an **Apple** chip (M1, M2, M3, M4)
+   - `SocialMCP-x86_64.dmg` if your Mac has an **Intel** chip
+
+   Not sure which you have? Click the  menu in the top-left corner →
+   **About This Mac**. If it says "Apple M" anything, use the first file.
+
+   Downloading the wrong one is harmless — macOS will simply say the app is
+   damaged or cannot be opened. Delete it and get the other file.
 2. Open the downloaded file and drag **SocialMCP** into your Applications folder.
 3. Double-click it.
 
