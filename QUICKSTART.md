@@ -54,13 +54,21 @@ open — everything it needs is inside the app.
 
 You need **Python 3.11 or newer** (check with `python3 --version`; if it is
 missing or older, install it from [python.org/downloads](https://www.python.org/downloads/)
-and tick "Add Python to PATH" if Windows offers it). Then:
+and tick "Add Python to PATH" if Windows offers it).
+
+Then install it in its own private environment, so nothing is added to the
+Python your system uses:
 
 ```
-pip install git+https://github.com/SciTechDude/socialMCP.git
+pip install --user pipx
+pipx install git+https://github.com/SciTechDude/socialMCP.git
 ```
 
-On a Mac, if that complains about permissions, use `pip3 install --user ...`.
+(If you already use `uv`: `uv tool install git+https://github.com/SciTechDude/socialMCP.git`.)
+
+Both commands keep SocialMCP and its dependencies in a folder of their own and
+make `socialmcp` available to type. Nothing else on your computer changes, and
+uninstalling removes all of it.
 </details>
 
 ## Step 3 — Connect it to your AI app
@@ -144,7 +152,7 @@ Example output:
   OK   Python version                 Python 3.12.11
   OK   Your contacts                  579 people, 5 invites pending
   !    Smart search (sqlite-vec)      not installed, so searches match words literally
-       -> Run: pip install sqlite-vec    (then: socialmcp reindex)
+       -> sqlite-vec should already be inside the app - install the latest version
   !    Claude Desktop                 installed but not connected yet
        -> Run: socialmcp setup
 ```
@@ -154,7 +162,7 @@ Common issues:
 | What you see | What to do |
 |---|---|
 | AI app doesn't show SocialMCP | Quit it **completely** and reopen. Config is only read at startup. |
-| "command not found: socialmcp" | Close and reopen your terminal. If it persists, use `python3 -m socialmcp.cli` instead of `socialmcp`. |
+| "command not found: socialmcp" | Close and reopen your terminal so it picks up the new command. If you used `pipx`, run `pipx ensurepath` once. (Not needed at all if you installed the Mac app.) |
 | Searches feel too literal | Install [Ollama](https://ollama.com), then run `ollama pull nomic-embed-text` and `socialmcp reindex`. This adds meaning-based search and still runs entirely on your computer. |
 | "no adapter recognized" | You unzipped the file, or it isn't a LinkedIn archive. Use the original `.zip` as downloaded. |
 

@@ -82,10 +82,27 @@ def _vector_check() -> Check:
             "Smart search (sqlite-vec)",
             WARN,
             "not installed, so searches match words literally",
-            "Run: pip install sqlite-vec    (then: socialmcp reindex)",
+            install_hint("sqlite-vec") + "    (then: socialmcp reindex)",
         )
     del sqlite_vec
     return Check("Smart search (sqlite-vec)", OK, "installed")
+
+
+def install_hint(package: str) -> str:
+    """Advise installing into the environment that is running, not a global one.
+
+    A bare `pip install` lands in whichever interpreter happens to be active,
+    which on many systems is the one the operating system depends on. Naming
+    `sys.executable` is unambiguous, and a bundled app should never be told to
+    pip at all — it carries its own interpreter, and anything missing from it
+    is a packaging bug rather than the user's problem.
+    """
+    if getattr(sys, "frozen", False):
+        return (
+            f"{package} should already be inside the app - install the latest "
+            "version of SocialMCP rather than installing it yourself"
+        )
+    return f"Run: {sys.executable} -m pip install {package}"
 
 
 def _embedding_checks(config: Config) -> list[Check]:

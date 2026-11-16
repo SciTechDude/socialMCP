@@ -32,17 +32,25 @@ and opens the folder to drop your LinkedIn export into. No Python, no terminal.
 
 Then: [**5-minute quick start**](QUICKSTART.md) · [What it can do](#what-you-can-do-with-it)
 
-**Developers** —
+**Any platform, from the command line** — installed into its own isolated
+environment, never into your system Python:
 
 ```bash
-pip install git+https://github.com/SciTechDude/socialMCP.git
+uv tool install git+https://github.com/SciTechDude/socialMCP.git
+# or: pipx install git+https://github.com/SciTechDude/socialMCP.git
+
 socialmcp setup        # connects the MCP clients you have installed
 socialmcp drop         # opens the folder for your export
 socialmcp ingest
 ```
 
+`uv tool` and `pipx` each create a private virtualenv for the app and put its
+commands on your PATH. **Avoid a bare `pip install`** — it would add
+dependencies to whichever interpreter happens to be active, which on many
+systems is the one the OS relies on.
+
 Requires Python 3.11+. Linux and Windows are supported this way; the Mac app is
-a convenience, not a different product.
+the same software with its own interpreter inside.
 
 ## Why this exists
 
@@ -109,9 +117,15 @@ Each of these has caveats worth knowing — see [CAPABILITIES.md](CAPABILITIES.m
 ```bash
 git clone https://github.com/SciTechDude/socialMCP.git
 cd socialMCP
+python3 -m venv .venv            # keeps everything out of your system Python
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 pytest
 ```
+
+The venv is required, not a nicety: installing the dependencies into a system
+or `mise`-managed interpreter is how you end up debugging an unrelated package
+conflict later. `.venv/` is gitignored.
 
 Optional, for meaning-based search (recommended, and entirely local):
 
@@ -352,8 +366,9 @@ server rather than guessing.
 ## Development
 
 ```bash
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest              # 63 tests, no network access required
+pytest              # no network access required
 ruff check .
 ```
 

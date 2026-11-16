@@ -21,10 +21,17 @@ module and a test — no schema migration, no changes to the server.
 ```bash
 git clone https://github.com/SciTechDude/socialMCP.git
 cd socialMCP
+python3 -m venv .venv            # Windows: py -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 pytest
 ruff check .
 ```
+
+Work inside the venv. Nothing in this project should ever be installed into a
+system interpreter — not in development, and not for users: the published
+command-line install uses `uv tool`/`pipx` (each app gets its own private
+environment) and the macOS app carries its own interpreter inside the bundle.
 
 ## Where a new platform's code goes
 

@@ -13,6 +13,7 @@ LinkedIn adapter vanishes and every export is "unrecognized".
 from __future__ import annotations
 
 import plistlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -95,3 +96,52 @@ def test_build_artifacts_are_not_committable(artifact: str):
         check=False,
     )
     assert result.returncode == 0, f"{artifact} is not gitignored"
+
+
+def test_nothing_advises_a_global_install():
+    """No instruction anywhere may install into a user's system interpreter.
+
+    A bare `pip install` lands in whichever interpreter is active, which on
+    many machines is the one the OS depends on. Published install paths are
+    `uv tool`/`pipx` (each app gets a private environment) or the macOS bundle
+    (its own interpreter inside); development uses an explicit venv.
+    """
+    offenders: list[str] = []
+    for name in ("README.md", "QUICKSTART.md", "CONTRIBUTING.md", "packaging/macos/README.md"):
+        path = REPO / name
+        if not path.is_file():
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for number, line in enumerate(lines, start=1):
+            stripped = line.strip()
+            if not stripped.startswith(("pip install", "pip3 install", "python -m pip install")):
+                continue
+            # Allowed: editable installs, which the companion test requires to
+            # be preceded by a venv, and bootstrapping pipx itself with --user.
+            if stripped.startswith(("pip install -e", "pip install --user pipx")):
+                continue
+            offenders.append(f"{name}:{number}: {stripped}")
+    assert not offenders, "global install instructions found: " + "; ".join(offenders)
+
+
+def test_editable_installs_are_always_preceded_by_a_venv():
+    """`pip install -e` is fine, but only inside a venv the reader just made."""
+    for name in ("README.md", "CONTRIBUTING.md"):
+        lines = (REPO / name).read_text(encoding="utf-8").splitlines()
+        for number, line in enumerate(lines):
+            # Only real commands; prose discussing `pip install -e` is fine.
+            if not line.strip().startswith("pip install -e"):
+                continue
+            window = "\n".join(lines[max(0, number - 6) : number])
+            assert "venv" in window, (
+                f"{name}:{number + 1} installs editable without creating a venv first"
+            )
+
+
+def test_doctor_never_suggests_a_bare_pip():
+    """The hint a user is most likely to copy and paste must be unambiguous."""
+    from socialmcp.doctor import install_hint
+
+    hint = install_hint("sqlite-vec")
+    assert "-m pip install" in hint
+    assert sys.executable in hint, "the hint must name the interpreter it applies to"
