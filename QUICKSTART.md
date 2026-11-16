@@ -44,13 +44,14 @@ up to 24 hours. Carry on with Step 2 while you wait.
    — **there are two files, and you need the right one:**
 
    - `SocialMCP-arm64.dmg` if your Mac has an **Apple** chip (M1, M2, M3, M4)
-   - `SocialMCP-x86_64.dmg` if your Mac has an **Intel** chip
+   - **Intel Macs: coming soon.** For now, use the command-line install in the
+     box below — it works on Intel Macs today.
 
    Not sure which you have? Click the  menu in the top-left corner →
-   **About This Mac**. If it says "Apple M" anything, use the first file.
+   **About This Mac**. If it says "Apple M" anything, the download is for you.
 
-   Downloading the wrong one is harmless — macOS will simply say the app is
-   damaged or cannot be opened. Delete it and get the other file.
+   If you do end up with a file for the wrong chip, nothing is broken — macOS
+   just says the app is damaged. Delete it and use the command-line install.
 2. Open the downloaded file and drag **SocialMCP** into your Applications folder.
 3. Double-click it.
 
