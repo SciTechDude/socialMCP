@@ -192,6 +192,18 @@ class LinkedInAdapter(BaseAdapter):
             return
         ctx.mark_parsed(path)
 
+        # The export only covers a rolling window (~6 months in observed
+        # archives). Recording its earliest timestamp lets the pipeline tell
+        # "this invitation is gone" apart from "this invitation aged out of the
+        # file", which is the difference between a declined invite and no
+        # information at all.
+        window_start = min(
+            (ts for ts in (parse_timestamp(r.get("sent_at")) for r in rows) if ts), default=None
+        )
+        if window_start:
+            ctx.options["invitation_window_start"] = window_start
+        ctx.options["invitations_present"] = True
+
         for index, row in enumerate(rows):
             sender = clean(row.get("from"))
             recipient = clean(row.get("to"))

@@ -128,8 +128,8 @@ def test_digest_returns_a_compact_slate_for_the_model_to_rank(server_state):
     assert priya["met"] == "2025-10-13"
     # Every person carries an explicit category, so the model never has to
     # infer who approached whom from two separate fields.
-    assert by_name["Rafael Santos"]["how"] == "i_invited_awaiting_them"
-    assert by_name["Yuki Tanaka"]["how"] == "they_invited_awaiting_me"
+    assert by_name["Rafael Santos"]["how"] == "i_invited_not_yet_accepted"
+    assert by_name["Yuki Tanaka"]["how"] == "they_invited_i_have_not_accepted_yet"
     assert by_name["Priya Raghavan"]["how"] == "i_invited_they_accepted"
     assert digest["relationships"]["counts"]["i_invited_they_accepted"] >= 1
     assert "legend" in digest["relationships"]
@@ -147,8 +147,8 @@ def test_event_cluster_groups_people_by_who_approached_whom(server_state):
     detail = srv.get_event_cluster(slug)
 
     groups = detail["names_by_relationship"]
-    assert "Rafael Santos" in groups["i_invited_awaiting_them"]
-    assert "Yuki Tanaka" in groups["they_invited_awaiting_me"]
+    assert "Rafael Santos" in groups["i_invited_not_yet_accepted"]
+    assert "Yuki Tanaka" in groups["they_invited_i_have_not_accepted_yet"]
     assert "Priya Raghavan" in groups["i_invited_they_accepted"]
 
     counts = detail["relationships"]["counts"]

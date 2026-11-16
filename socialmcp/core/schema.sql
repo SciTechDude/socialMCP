@@ -68,6 +68,12 @@ CREATE TABLE IF NOT EXISTS contacts (
     origin_direction TEXT CHECK (origin_direction IN ('outbound', 'inbound')),
 
     invited_at          TEXT,                  -- ISO-8601 UTC, from Invitations.csv
+    -- Set when an invitation that was pending in an earlier archive has
+    -- vanished from a later one without becoming a connection: declined,
+    -- withdrawn, ignored or expired. LinkedIn's export does not say which, so
+    -- neither do we. Only inferred while the invite is still inside the
+    -- export's ~6-month invitation window; outside it, absence is meaningless.
+    invite_lapsed_at    TEXT,
     connected_on        TEXT,                  -- 'YYYY-MM-DD', from Connections.csv
     last_interaction_at TEXT,                  -- max(interactions.occurred_at)
 
@@ -244,7 +250,7 @@ SELECT c.id, c.full_name, c.company, c."position", c.profile_url,
        c.origin_note, c.invited_at,
        CAST(julianday('now') - julianday(c.invited_at) AS INTEGER) AS days_waiting
 FROM contacts c
-WHERE c.status = 'pending'
+WHERE c.status = 'pending' AND c.invite_lapsed_at IS NULL
 ORDER BY c.invited_at DESC;
 
 CREATE VIEW IF NOT EXISTS v_contact_clusters AS

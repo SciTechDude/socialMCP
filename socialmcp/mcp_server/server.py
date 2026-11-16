@@ -42,6 +42,7 @@ from ..core.db import Database, open_database
 from ..core.harness import Harness
 from ..core.ingest import IngestError, add_note, ingest_path, refresh_embeddings
 from ..core.search import (
+    RELATIONSHIP_SQL,
     AmbiguousContactError,
     SearchFilters,
     get_contact_detail,
@@ -225,22 +226,12 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
         return {"error": "no_matching_cluster", "event": event, "known_clusters": known}
 
     rows = st.db.query(
-        """
+        f"""
         SELECT c.id, c.full_name, c.company, c."position", c.profile_url, c.status,
                c.origin_note, c.origin_direction, c.connected_on, c.invited_at,
                c.last_interaction_at,
                COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) AS met_on,
-               (CASE
-                  WHEN c.status = 'pending'  THEN 'i_invited_awaiting_them'
-                  WHEN c.status = 'received' THEN 'they_invited_awaiting_me'
-                  WHEN c.status = 'withdrawn' THEN 'invite_withdrawn'
-                  WHEN c.status = 'connected' AND c.origin_direction = 'outbound'
-                       THEN 'i_invited_they_accepted'
-                  WHEN c.status = 'connected' AND c.origin_direction = 'inbound'
-                       THEN 'they_invited_i_accepted'
-                  WHEN c.status = 'connected' THEN 'connected_unknown_invite'
-                  ELSE 'unknown'
-                END) AS how,
+               ({RELATIONSHIP_SQL}) AS how,
                EXISTS (SELECT 1 FROM interactions i
                        WHERE i.contact_id = c.id AND i.kind IN ('message','note')) AS followed_up
         FROM contacts c
@@ -353,28 +344,7 @@ def get_network_digest(
         f"""
         SELECT c.id, c.full_name, c.company, c."position", c.status, c.origin_note,
                COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) AS met_on,
-               (CASE
-                  WHEN c.status = 'pending'  THEN 'i_invited_awaiting_them'
-                  WHEN c.status = 'received' THEN 'they_invited_awaiting_me'
-                  WHEN c.status = 'withdrawn' THEN 'invite_withdrawn'
-                  WHEN c.status = 'connected' AND c.origin_direction = 'outbound'
-                       THEN 'i_invited_they_accepted'
-                  WHEN c.status = 'connected' AND c.origin_direction = 'inbound'
-                       THEN 'they_invited_i_accepted'
-                  WHEN c.status = 'connected' THEN 'connected_unknown_invite'
-                  ELSE 'unknown'
-                END) AS how,
-               (CASE
-                  WHEN c.status = 'pending'  THEN 'i_invited_awaiting_them'
-                  WHEN c.status = 'received' THEN 'they_invited_awaiting_me'
-                  WHEN c.status = 'withdrawn' THEN 'invite_withdrawn'
-                  WHEN c.status = 'connected' AND c.origin_direction = 'outbound'
-                       THEN 'i_invited_they_accepted'
-                  WHEN c.status = 'connected' AND c.origin_direction = 'inbound'
-                       THEN 'they_invited_i_accepted'
-                  WHEN c.status = 'connected' THEN 'connected_unknown_invite'
-                  ELSE 'unknown'
-                END) AS how,
+               ({RELATIONSHIP_SQL}) AS how,
                (SELECT ec.name FROM event_clusters ec
                 JOIN contact_event_clusters cec ON cec.cluster_id = ec.id
                 WHERE cec.contact_id = c.id ORDER BY ec.start_date LIMIT 1) AS event,

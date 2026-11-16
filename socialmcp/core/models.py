@@ -93,6 +93,7 @@ class IngestStats:
     clusters_created: int = 0
     clusters_updated: int = 0
     pending_invitations: int = 0
+    invites_lapsed: int = 0
     embeddings_written: int = 0
     warnings: list[str] = field(default_factory=list)
 
@@ -111,6 +112,7 @@ class IngestStats:
             "clusters_created": self.clusters_created,
             "clusters_updated": self.clusters_updated,
             "pending_invitations": self.pending_invitations,
+            "invites_lapsed": self.invites_lapsed,
             "embeddings_written": self.embeddings_written,
             "warnings": self.warnings,
         }

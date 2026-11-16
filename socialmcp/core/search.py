@@ -112,14 +112,18 @@ class SearchResult:
 # sent the request.
 RELATIONSHIP_SQL = """
     CASE
-      WHEN c.status = 'pending'                                 THEN 'i_invited_awaiting_them'
-      WHEN c.status = 'received'                                THEN 'they_invited_awaiting_me'
-      WHEN c.status = 'withdrawn'                               THEN 'invite_withdrawn'
       WHEN c.status = 'connected' AND c.origin_direction = 'outbound'
-                                                                THEN 'i_invited_they_accepted'
+                                     THEN 'i_invited_they_accepted'
       WHEN c.status = 'connected' AND c.origin_direction = 'inbound'
-                                                                THEN 'they_invited_i_accepted'
-      WHEN c.status = 'connected'                               THEN 'connected_unknown_invite'
+                                     THEN 'they_invited_i_accepted'
+      WHEN c.status = 'connected'    THEN 'connected_unknown_invite'
+      WHEN c.status = 'pending'  AND c.invite_lapsed_at IS NOT NULL
+                                     THEN 'i_invited_it_lapsed'
+      WHEN c.status = 'received' AND c.invite_lapsed_at IS NOT NULL
+                                     THEN 'they_invited_it_lapsed'
+      WHEN c.status = 'pending'      THEN 'i_invited_not_yet_accepted'
+      WHEN c.status = 'received'     THEN 'they_invited_i_have_not_accepted_yet'
+      WHEN c.status = 'withdrawn'    THEN 'i_invited_then_withdrew'
       ELSE 'unknown'
     END
 """
@@ -127,12 +131,22 @@ RELATIONSHIP_SQL = """
 RELATIONSHIP_MEANING = {
     "i_invited_they_accepted": "you sent the invitation and they accepted",
     "they_invited_i_accepted": "they sent the invitation and you accepted",
-    "i_invited_awaiting_them": "you sent an invitation that has not been accepted",
-    "they_invited_awaiting_me": "they sent you an invitation you have not accepted",
-    "invite_withdrawn": "the invitation was withdrawn",
+    "i_invited_not_yet_accepted": "your invitation is still unanswered",
+    "they_invited_i_have_not_accepted_yet": (
+        "their invitation is still sitting unanswered by you"
+    ),
+    "i_invited_it_lapsed": (
+        "your invitation disappeared from a later export without connecting - "
+        "declined, withdrawn or expired; LinkedIn's export does not say which"
+    ),
+    "they_invited_it_lapsed": (
+        "their invitation disappeared from a later export without connecting - "
+        "you declined or ignored it, or it expired"
+    ),
+    "i_invited_then_withdrew": "you withdrew the invitation",
     "connected_unknown_invite": (
-        "connected, but the export's invitation history does not reach back far "
-        "enough to say who invited whom"
+        "connected, but the export's invitation history (a rolling ~6-month "
+        "window) does not reach back far enough to say who invited whom"
     ),
     "unknown": "no invitation or connection record",
 }
