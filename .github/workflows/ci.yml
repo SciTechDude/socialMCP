@@ -1,0 +1,167 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The normal suite, across the Python versions and platforms contributors use.
+  test:
+    name: tests (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+        # Full history is not needed, but .git must exist: tests/test_privacy.py
+        # asserts against the real .gitignore and the tracked file list.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: pytest -q
+
+  # The bug that shipped: `mcp>=1.2` resolves to 2.x, where FastMCP became
+  # MCPServer. Both majors are supported, so both must be exercised — a single
+  # resolved version would silently stop covering the other.
+  sdk-majors:
+    name: mcp ${{ matrix.mcp }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mcp: ["1.*", ">=2,<3"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - name: Pin the MCP SDK major under test
+        run: pip install "mcp==${{ matrix.mcp }}" || pip install "mcp${{ matrix.mcp }}"
+      - run: python -c "import importlib.metadata as m; print('mcp', m.version('mcp'))"
+      - run: pytest -q
+
+  # The external-user path. Builds a wheel, installs it into a venv that shares
+  # nothing with the checkout, and drives the installed console script over real
+  # MCP stdio. This is what catches packaging faults an editable install hides:
+  # schema.sql missing from the wheel, console scripts not generated, config
+  # resolving to the developer's source tree, logging written to stdout (which
+  # is the transport, so a stray print corrupts every client session).
+  clean-install:
+    name: clean install + stdio smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build a wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Install the wheel into an isolated venv
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install dist/*.whl
+
+      - name: Data files survived packaging
+        run: |
+          /tmp/venv/bin/python - <<'PY'
+          import pathlib, socialmcp.core as core
+          d = pathlib.Path(core.__file__).parent
+          for name in ("schema.sql", "schema_vec.sql"):
+              assert (d / name).is_file(), f"{name} missing from the wheel"
+          print("data files OK")
+          PY
+
+      - name: Console scripts work and scaffold under SOCIALMCP_HOME
+        env:
+          SOCIALMCP_HOME: /tmp/socialmcp-home
+          SOCIALMCP_EMBED_PROVIDER: none
+        run: |
+          /tmp/venv/bin/socialmcp stats
+          test -d /tmp/socialmcp-home/drop-archive/linkedin
+          # The drop zone must live under the configured home, never in the
+          # installed package directory or a source checkout.
+          /tmp/venv/bin/socialmcp stats | grep -q '/tmp/socialmcp-home/socialmcp.db'
+
+      - name: Ingest a synthetic export through the drop zone
+        env:
+          SOCIALMCP_HOME: /tmp/socialmcp-home
+          SOCIALMCP_EMBED_PROVIDER: none
+        run: |
+          /tmp/venv/bin/python - <<'PY'
+          import pathlib, zipfile
+          src = pathlib.Path("tests/fixtures/linkedin")
+          dst = pathlib.Path("/tmp/socialmcp-home/drop-archive/linkedin/export.zip")
+          with zipfile.ZipFile(dst, "w") as z:
+              for f in sorted(src.iterdir()):
+                  if f.is_file():
+                      z.write(f, f.name)
+          PY
+          /tmp/venv/bin/socialmcp ingest
+          /tmp/venv/bin/socialmcp stats | grep -q '"contacts": 12'
+
+      - name: Drive the installed server over MCP stdio
+        env:
+          SOCIALMCP_HOME: /tmp/socialmcp-home
+          SOCIALMCP_EMBED_PROVIDER: none
+        run: |
+          /tmp/venv/bin/python - <<'PY'
+          import asyncio, json, os
+          from mcp import ClientSession, StdioServerParameters
+          from mcp.client.stdio import stdio_client
+
+          def field(obj, *names):
+              for n in names:
+                  v = getattr(obj, n, None)
+                  if v is not None:
+                      return v
+
+          async def main():
+              params = StdioServerParameters(
+                  command="/tmp/venv/bin/socialmcp-server", args=[], env=dict(os.environ)
+              )
+              async with stdio_client(params) as (r, w):
+                  async with ClientSession(r, w) as s:
+                      init = await s.initialize()
+                      assert field(init, "serverInfo", "server_info").name == "socialmcp"
+                      tools = {t.name for t in (await s.list_tools()).tools}
+                      assert "search_network" in tools, tools
+                      assert len(tools) >= 11, tools
+                      res = await s.call_tool("network_stats", {})
+                      assert json.loads(res.content[0].text)["contacts"] == 12
+                      res = await s.call_tool(
+                          "search_network", {"query": "Seattle AI Week", "limit": 3}
+                      )
+                      assert json.loads(res.content[0].text)["returned"] > 0
+                      print(f"stdio smoke OK: {len(tools)} tools")
+
+          asyncio.run(asyncio.wait_for(main(), timeout=120))
+          PY
+
+  # Personal data and credentials must not be committable. Runs on its own so a
+  # failure here is unmistakable in the checks list.
+  privacy:
+    name: privacy guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q tests/test_privacy.py -v
