@@ -126,11 +126,33 @@ def test_digest_returns_a_compact_slate_for_the_model_to_rank(server_state):
     assert priya["role"] == "Head of GTM @ Northwind AI"
     assert "Seattle AI Week" in priya["how_we_met"]
     assert priya["met"] == "2025-10-13"
-    # Someone who never accepted is in the slate, flagged, not hidden.
-    assert by_name["Rafael Santos"]["status"] == "pending"
+    # Every person carries an explicit category, so the model never has to
+    # infer who approached whom from two separate fields.
+    assert by_name["Rafael Santos"]["how"] == "i_invited_awaiting_them"
+    assert by_name["Yuki Tanaka"]["how"] == "they_invited_awaiting_me"
+    assert by_name["Priya Raghavan"]["how"] == "i_invited_they_accepted"
+    assert digest["relationships"]["counts"]["i_invited_they_accepted"] >= 1
+    assert "legend" in digest["relationships"]
 
     # Filters compose, and notes can be dropped to save tokens.
     scoped = srv.get_network_digest(status="connected", include_notes=False, limit=3)
     assert scoped["returned"] == 3
     assert scoped["truncated"] is True
     assert all("how_we_met" not in p for p in scoped["people"])
+
+
+def test_event_cluster_groups_people_by_who_approached_whom(server_state):
+    """The tool categorizes; the model should not have to reconstruct it."""
+    slug = srv.list_event_clusters()["clusters"][0]["slug"]
+    detail = srv.get_event_cluster(slug)
+
+    groups = detail["names_by_relationship"]
+    assert "Rafael Santos" in groups["i_invited_awaiting_them"]
+    assert "Yuki Tanaka" in groups["they_invited_awaiting_me"]
+    assert "Priya Raghavan" in groups["i_invited_they_accepted"]
+
+    counts = detail["relationships"]["counts"]
+    assert sum(counts.values()) == detail["returned"]
+    # The legend only explains categories that are actually present.
+    assert set(detail["relationships"]["legend"]) == set(counts)
+    assert "unknown" not in counts or counts["unknown"] == 0

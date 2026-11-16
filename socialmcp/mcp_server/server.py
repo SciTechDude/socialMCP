@@ -45,6 +45,7 @@ from ..core.search import (
     AmbiguousContactError,
     SearchFilters,
     get_contact_detail,
+    relationship_breakdown,
     resolve_contact,
 )
 from ..core.search import (
@@ -229,6 +230,17 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
                c.origin_note, c.origin_direction, c.connected_on, c.invited_at,
                c.last_interaction_at,
                COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) AS met_on,
+               (CASE
+                  WHEN c.status = 'pending'  THEN 'i_invited_awaiting_them'
+                  WHEN c.status = 'received' THEN 'they_invited_awaiting_me'
+                  WHEN c.status = 'withdrawn' THEN 'invite_withdrawn'
+                  WHEN c.status = 'connected' AND c.origin_direction = 'outbound'
+                       THEN 'i_invited_they_accepted'
+                  WHEN c.status = 'connected' AND c.origin_direction = 'inbound'
+                       THEN 'they_invited_i_accepted'
+                  WHEN c.status = 'connected' THEN 'connected_unknown_invite'
+                  ELSE 'unknown'
+                END) AS how,
                EXISTS (SELECT 1 FROM interactions i
                        WHERE i.contact_id = c.id AND i.kind IN ('message','note')) AS followed_up
         FROM contacts c
@@ -241,6 +253,9 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
     )
     contacts = [dict(r) for r in rows]
     never_accepted = [c["full_name"] for c in contacts if c["status"] in {"pending", "received"}]
+    by_category: dict[str, list[str]] = {}
+    for contact in contacts:
+        by_category.setdefault(contact["how"], []).append(contact["full_name"])
     return {
         "cluster": {
             "id": int(cluster["id"]),
@@ -255,6 +270,8 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
         "contacts": contacts,
         "not_followed_up": [c["full_name"] for c in contacts if not c["followed_up"]],
         "invitation_never_accepted": never_accepted,
+        "relationships": relationship_breakdown(contacts),
+        "names_by_relationship": by_category,
     }
 
 
@@ -336,6 +353,28 @@ def get_network_digest(
         f"""
         SELECT c.id, c.full_name, c.company, c."position", c.status, c.origin_note,
                COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) AS met_on,
+               (CASE
+                  WHEN c.status = 'pending'  THEN 'i_invited_awaiting_them'
+                  WHEN c.status = 'received' THEN 'they_invited_awaiting_me'
+                  WHEN c.status = 'withdrawn' THEN 'invite_withdrawn'
+                  WHEN c.status = 'connected' AND c.origin_direction = 'outbound'
+                       THEN 'i_invited_they_accepted'
+                  WHEN c.status = 'connected' AND c.origin_direction = 'inbound'
+                       THEN 'they_invited_i_accepted'
+                  WHEN c.status = 'connected' THEN 'connected_unknown_invite'
+                  ELSE 'unknown'
+                END) AS how,
+               (CASE
+                  WHEN c.status = 'pending'  THEN 'i_invited_awaiting_them'
+                  WHEN c.status = 'received' THEN 'they_invited_awaiting_me'
+                  WHEN c.status = 'withdrawn' THEN 'invite_withdrawn'
+                  WHEN c.status = 'connected' AND c.origin_direction = 'outbound'
+                       THEN 'i_invited_they_accepted'
+                  WHEN c.status = 'connected' AND c.origin_direction = 'inbound'
+                       THEN 'they_invited_i_accepted'
+                  WHEN c.status = 'connected' THEN 'connected_unknown_invite'
+                  ELSE 'unknown'
+                END) AS how,
                (SELECT ec.name FROM event_clusters ec
                 JOIN contact_event_clusters cec ON cec.cluster_id = ec.id
                 WHERE cec.contact_id = c.id ORDER BY ec.start_date LIMIT 1) AS event,
@@ -355,7 +394,7 @@ def get_network_digest(
             "name": row["full_name"],
             "role": " @ ".join(p for p in (row["position"], row["company"]) if p) or None,
             "met": row["met_on"],
-            "status": row["status"],
+            "how": row["how"],
             "followed_up": bool(row["followed_up"]),
         }
         if row["event"]:
@@ -368,6 +407,7 @@ def get_network_digest(
         "total_matching": total,
         "returned": len(people),
         "truncated": total > len(people),
+        "relationships": relationship_breakdown(people),
         "people": people,
     }
 

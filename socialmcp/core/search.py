@@ -96,16 +96,69 @@ class SearchResult:
             "mode_used": self.mode_used,
             "total_matching_filters": self.total_matching_filters,
             "returned": len(self.contacts),
+            "relationships": relationship_breakdown(self.contacts),
             "contacts": self.contacts,
             "notes": self.notes,
         }
 
 
+# Who approached whom, and what came of it. Derived in SQL so every tool
+# reports the same five categories rather than each caller re-inferring them
+# from (status, origin_direction) — a distinction a model should never have to
+# reconstruct, and would eventually get wrong.
+#
+# 'unknown_invite' is honest, not a gap: LinkedIn's Invitations.csv only covers
+# a recent window, so for older connections the archive simply does not say who
+# sent the request.
+RELATIONSHIP_SQL = """
+    CASE
+      WHEN c.status = 'pending'                                 THEN 'i_invited_awaiting_them'
+      WHEN c.status = 'received'                                THEN 'they_invited_awaiting_me'
+      WHEN c.status = 'withdrawn'                               THEN 'invite_withdrawn'
+      WHEN c.status = 'connected' AND c.origin_direction = 'outbound'
+                                                                THEN 'i_invited_they_accepted'
+      WHEN c.status = 'connected' AND c.origin_direction = 'inbound'
+                                                                THEN 'they_invited_i_accepted'
+      WHEN c.status = 'connected'                               THEN 'connected_unknown_invite'
+      ELSE 'unknown'
+    END
+"""
+
+RELATIONSHIP_MEANING = {
+    "i_invited_they_accepted": "you sent the invitation and they accepted",
+    "they_invited_i_accepted": "they sent the invitation and you accepted",
+    "i_invited_awaiting_them": "you sent an invitation that has not been accepted",
+    "they_invited_awaiting_me": "they sent you an invitation you have not accepted",
+    "invite_withdrawn": "the invitation was withdrawn",
+    "connected_unknown_invite": (
+        "connected, but the export's invitation history does not reach back far "
+        "enough to say who invited whom"
+    ),
+    "unknown": "no invitation or connection record",
+}
+
+
+def relationship_breakdown(people: list[dict[str, Any]], key: str = "how") -> dict[str, Any]:
+    """Counts per category, plus a legend for only the categories present."""
+    counts: dict[str, int] = {}
+    for person in people:
+        label = person.get(key)
+        if label:
+            counts[label] = counts.get(label, 0) + 1
+    ordered = dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+    return {
+        "counts": ordered,
+        "legend": {k: RELATIONSHIP_MEANING[k] for k in ordered if k in RELATIONSHIP_MEANING},
+    }
+
+
 CONTACT_COLUMNS = """
     c.id, c.source, c.full_name, c.company, c."position", c.headline, c.location,
     c.email, c.profile_url, c.status, c.origin_note, c.origin_direction,
-    c.invited_at, c.connected_on, c.last_interaction_at
-"""
+    c.invited_at, c.connected_on, c.last_interaction_at,
+    COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) AS met_on,
+    () AS how
+""".replace("()", RELATIONSHIP_SQL)
 
 
 def search_network(
