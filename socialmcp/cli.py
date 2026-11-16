@@ -1,4 +1,13 @@
-"""Local CLI — useful for testing the pipeline without an AI client attached.
+"""SocialMCP command line.
+
+Start here if you have never used a terminal:
+
+    socialmcp setup                 # connect SocialMCP to the AI apps you have
+    socialmcp drop                  # open the folder to put your LinkedIn .zip in
+    socialmcp ingest                # read whatever is in that folder
+    socialmcp doctor                # check everything and tell you what to fix
+
+Everything below is for development and scripting:
 
     socialmcp serve                 # run the MCP server over stdio (what clients launch)
     socialmcp watch                 # run the harness alone, in the foreground
@@ -36,6 +45,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--log-level", default="INFO")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p_setup = sub.add_parser("setup", help="connect SocialMCP to your AI apps (start here)")
+    p_setup.add_argument("--client", action="append", dest="clients",
+                         help="only configure this client (claude-desktop, claude-code, cursor, "
+                              "windsurf, vscode, zed); repeatable")
+    p_setup.add_argument("--force", action="store_true",
+                         help="replace an existing socialmcp entry")
+    p_setup.add_argument("--dry-run", action="store_true",
+                         help="show what would change without writing anything")
+
+    sub.add_parser("doctor", help="check your setup and explain how to fix problems")
+    sub.add_parser("drop", help="open the folder where LinkedIn .zip files go")
     sub.add_parser("serve", help="run the MCP server over stdio")
     sub.add_parser("stats", help="print local CRM stats")
     sub.add_parser("clusters", help="list event clusters")
@@ -91,7 +111,101 @@ def main(argv: list[str] | None = None) -> int:
         db.close()
 
 
+SYMBOL = {"ok": "OK   ", "warn": "!    ", "fail": "X    "}
+
+
+def _cmd_setup(args: argparse.Namespace, config) -> int:
+    from .clients import known_clients, setup_all
+
+    config.ensure_dirs()
+    drop = config.drop_dir / "linkedin"
+
+    # A client launches the server with no shell and no environment, so the
+    # paths it needs are pinned into the client's config rather than inherited.
+    env = {"SOCIALMCP_HOME": str(config.home), "SOCIALMCP_DROP_DIR": str(config.drop_dir)}
+
+    print("Connecting SocialMCP to the AI apps on this computer...\n")
+    launch, results = setup_all(only=args.clients, env=env, force=args.force, dry_run=args.dry_run)
+
+    if not results:
+        print("  No MCP-compatible AI apps found.\n")
+        print("  Install one of these, then run 'socialmcp setup' again:")
+        print("    Claude Desktop   https://claude.ai/download")
+        print("    Cursor           https://cursor.com")
+        print("    Windsurf         https://windsurf.com")
+        print("\n  Apps checked: " + ", ".join(t.display_name for t in known_clients()))
+        return 1
+
+    restart_needed = []
+    for result in results:
+        good = result.status in {"configured", "updated", "already"}
+        print(f"  {SYMBOL['ok' if good else 'warn']}{result.client}: {result.status}")
+        if result.detail:
+            print(f"         {result.detail}")
+        if result.backup:
+            print(f"         (previous settings saved to {result.backup})")
+        if result.status in {"configured", "updated"}:
+            restart_needed.append(result.client)
+
+    print(f"\n  Start command given to those apps:\n    {launch.as_display()}")
+    print("\nNext steps:")
+    print(f"  1. Put your LinkedIn export .zip in this folder:\n       {drop}")
+    print("     (LinkedIn: Settings & Privacy -> Data Privacy -> Get a copy of your data)")
+    print("  2. Run: socialmcp ingest")
+    if restart_needed:
+        print(f"  3. Quit and reopen: {', '.join(restart_needed)}")
+    print('  4. Ask your AI assistant: "what event clusters are in my network?"')
+    return 0
+
+
+def _cmd_doctor(config) -> int:
+    from .doctor import FAIL, WARN, run_checks
+
+    checks = run_checks(config)
+    print("SocialMCP check-up\n")
+    width = max(len(c.name) for c in checks)
+    for check in checks:
+        print(f"  {SYMBOL[check.status]}{check.name.ljust(width)}  {check.detail}")
+        if check.fix:
+            print(f"       -> {check.fix}")
+
+    problems = [c for c in checks if c.status == FAIL]
+    warnings = [c for c in checks if c.status == WARN]
+    print()
+    if problems:
+        print(f"{len(problems)} thing(s) must be fixed before SocialMCP will work.")
+        return 1
+    if warnings:
+        print(f"Everything essential works. {len(warnings)} optional improvement(s) above.")
+        return 0
+    print("Everything looks good.")
+    return 0
+
+
+def _cmd_drop(config) -> int:
+    from .doctor import open_folder
+
+    config.ensure_dirs()
+    drop = config.drop_dir / "linkedin"
+    print(f"Put your LinkedIn export .zip file in this folder:\n\n    {drop}\n")
+    print("Get the file from LinkedIn: Settings & Privacy -> Data Privacy ->")
+    print("Get a copy of your data -> request the larger archive.\n")
+    if open_folder(drop):
+        print("(Opened it for you.)")
+    print("\nOnce the .zip is in there, run: socialmcp ingest")
+    return 0
+
+
 def _dispatch(args: argparse.Namespace, config, db) -> int:
+    if args.command == "setup":
+        return _cmd_setup(args, config)
+
+    if args.command == "doctor":
+        return _cmd_doctor(config)
+
+    if args.command == "drop":
+        return _cmd_drop(config)
+
     if args.command == "stats":
         _print(db.stats())
         return 0
