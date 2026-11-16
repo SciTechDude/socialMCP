@@ -262,3 +262,60 @@ def test_no_real_export_sits_in_the_repo_working_tree_unignored():
             check=False,
         )
         assert result.returncode == 0, f"{relative} is in the repo and NOT ignored"
+
+
+@requires_git
+def test_no_virtualenv_or_build_artifact_is_tracked():
+    """Nothing from a venv or build output may be committed.
+
+    This is a regression test. A per-architecture rename turned the build
+    environment into `.venv-build-<arch>`, which the existing `.venv-build/`
+    rule did not match, and a routine `git add -A` committed 3,317 files and
+    75 MB of vendored third-party code. The privacy suite noticed only because
+    that code happens to contain credential-shaped test material.
+    """
+    tracked = git("ls-files").splitlines()
+    if not tracked:
+        pytest.skip("nothing committed yet")
+
+    offenders = [
+        path
+        for path in tracked
+        if path.startswith((".venv", "venv", "dist/", "build/"))
+        or "/site-packages/" in path
+        or path.endswith((".dmg", ".pkg", ".whl"))
+    ]
+    assert not offenders, f"virtualenv or build artifacts are tracked: {offenders[:10]}"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".venv",
+        ".venv/lib/python3.12/site-packages/anything.py",
+        ".venv-build",
+        ".venv-build-arm64",
+        ".venv-build-x86_64/lib/site-packages/x.py",
+        "venv",
+        "venv-3.12",
+        "dist/SocialMCP-arm64.dmg",
+        "build/arm64/anything",
+    ],
+)
+@requires_git
+def test_every_venv_shape_is_ignored(path: str):
+    """Covers the names a venv actually gets, not just the one in use today.
+
+    The rule intentionally has no trailing slash: git cannot tell that a path
+    which does not exist yet is a directory, so a directory-only pattern fails
+    to match a venv before it is created — exactly when the mistake is made.
+    """
+    import subprocess
+
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", "--no-index", path],
+        cwd=REPO,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"{path!r} would be committable"
