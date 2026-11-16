@@ -35,6 +35,7 @@ try:  # mcp >= 2.0
 except ImportError:  # mcp 1.x
     from mcp.server.fastmcp import FastMCP as _MCPServerImpl
 
+from .. import capabilities
 from ..adapters import available_adapters
 from ..config import Config, load_config
 from ..core import clustering
@@ -58,6 +59,10 @@ log = logging.getLogger("socialmcp.server")
 INSTRUCTIONS = """\
 SocialMCP is a local-first personal CRM built from the user's own social data
 exports (LinkedIn today). All data is in a local SQLite file; nothing is scraped.
+
+If the user asks what they can do, or seems unsure where to start, call
+`list_capabilities` rather than guessing from tool names — it also carries the
+authoritative list of what this cannot do.
 
 How to work with it:
 * `search_network` is the main entry point. It does hybrid semantic + keyword
@@ -512,6 +517,87 @@ def log_contact_note(contact: str, note: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def enrich_contact(
+    contact: str,
+    finding: str,
+    source_url: str | None = None,
+    source_name: str | None = None,
+) -> dict[str, Any]:
+    """File something you looked up about a person, with its source.
+
+    Use this after looking a person or their company up from PUBLIC sources —
+    a company site, a conference bio, a podcast, a news article. The finding is
+    stored locally against that contact and becomes searchable.
+
+    SocialMCP never fetches anything itself, and must never be pointed at a
+    social network: reading profiles through automated access breaks those
+    networks' terms and puts the user's own account at risk. Do the lookup
+    yourself, for one person at a time, only when the user asks.
+
+    The stored line records where it came from, so the user can always tell
+    their own judgement apart from something that was looked up. For the
+    user's own opinion, use `log_contact_note` instead.
+
+    Args:
+        contact: Contact id, profile URL, or full name.
+        finding: What you learned, in a sentence or two.
+        source_url: Where it came from. Strongly preferred — an unsourced
+            finding cannot be checked later.
+        source_name: A short label for the source, e.g. the publication or
+            site name. Derived from the URL when omitted.
+    """
+    st = state()
+    text = (finding or "").strip()
+    if not text:
+        return {"error": "finding is empty"}
+
+    try:
+        row = resolve_contact(st.db, contact)
+    except AmbiguousContactError as exc:
+        return {
+            "error": "ambiguous_contact",
+            "candidates": exc.candidates,
+            "hint": "Call enrich_contact again with the numeric id.",
+        }
+    if row is None:
+        return {"error": "not_found", "contact": contact}
+
+    label = source_name
+    if not label and source_url:
+        from urllib.parse import urlparse
+
+        label = urlparse(source_url).netloc.removeprefix("www.") or None
+    subject = f"looked up · {label}" if label else "looked up"
+
+    body = text if not source_url else f"{text}\n\nSource: {source_url}"
+    try:
+        result = add_note(st.db, int(row["id"]), body, subject=subject)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return result | {
+        "full_name": row["full_name"],
+        "recorded_as": subject,
+        "unsourced": source_url is None,
+    }
+
+
+@mcp.tool()
+def list_capabilities(include_limits: bool = True) -> dict[str, Any]:
+    """What SocialMCP can and cannot do, in plain language.
+
+    Call this when the user asks what they can do with their network, what this
+    tool is for, or how to get started — and before telling them something is
+    impossible, since the limits listed here are the authoritative ones.
+
+    Args:
+        include_limits: Include what it cannot do (default True). The limits
+            matter as much as the features; a user who thinks this reads live
+            data will misinterpret empty results.
+    """
+    return capabilities.as_dict(include_limits=include_limits)
+
+
+@mcp.tool()
 def rename_event_cluster(event: str, new_name: str) -> dict[str, Any]:
     """Give an auto-detected burst its real event name, e.g. 'Seattle AI Week 2025'.
 
@@ -617,6 +703,12 @@ def clusters_resource() -> dict[str, Any]:
             )
         ]
     }
+
+
+@mcp.resource("socialmcp://capabilities", mime_type="application/json")
+def capabilities_resource() -> dict[str, Any]:
+    """What SocialMCP can and cannot do, in plain language."""
+    return capabilities.as_dict()
 
 
 @mcp.resource("socialmcp://adapters", mime_type="application/json")

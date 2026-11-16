@@ -850,8 +850,21 @@ def _refresh_derived(db: Database, contact_id: int, now: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def add_note(db: Database, contact_id: int, note: str, *, occurred_at: str | None = None) -> dict[str, Any]:
-    """Append a timestamped local note and refresh the contact's search text."""
+def add_note(
+    db: Database,
+    contact_id: int,
+    note: str,
+    *,
+    occurred_at: str | None = None,
+    subject: str | None = None,
+) -> dict[str, Any]:
+    """Append a timestamped local note and refresh the contact's search text.
+
+    `subject` records provenance. It stays empty for notes the user wrote
+    themselves and carries a source label for findings gathered elsewhere, so
+    the user can always tell their own judgement apart from something an
+    assistant looked up. Both are searchable.
+    """
     text = (note or "").strip()
     if not text:
         raise ValueError("note is empty")
@@ -861,16 +874,25 @@ def add_note(db: Database, contact_id: int, note: str, *, occurred_at: str | Non
         cursor = db.execute(
             """
             INSERT INTO interactions
-                (contact_id, source, kind, direction, occurred_at, body, dedupe_key, created_at)
-            SELECT ?, source, 'note', 'self', ?, ?, ?, ? FROM contacts WHERE id = ?
+                (contact_id, source, kind, direction, occurred_at, subject, body,
+                 dedupe_key, created_at)
+            SELECT ?, source, 'note', 'self', ?, ?, ?, ?, ? FROM contacts WHERE id = ?
             """,
-            (contact_id, stamp, text, f"note:{contact_id}:{now}:{text_hash(text)[:10]}", now, contact_id),
+            (
+                contact_id,
+                stamp,
+                subject,
+                text,
+                f"note:{contact_id}:{now}:{text_hash(text)[:10]}",
+                now,
+                contact_id,
+            ),
         )
         if cursor.rowcount == 0:
             raise ValueError(f"no contact with id {contact_id}")
         _refresh_derived(db, contact_id, now)
         db.commit()
-    return {"contact_id": contact_id, "note": text, "logged_at": stamp}
+    return {"contact_id": contact_id, "note": text, "logged_at": stamp, "source": subject}
 
 
 # ---------------------------------------------------------------------------
