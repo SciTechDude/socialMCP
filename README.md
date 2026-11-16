@@ -30,6 +30,20 @@ Assistant:  7 people, 13-15 Oct. Four are still cold:
 → drag to Applications → double-click. It finds your AI app, connects itself,
 and opens the folder to drop your LinkedIn export into. No Python, no terminal.
 
+> **Pick the file that matches your Mac.** There are two, and the wrong one
+> will not open at all:
+>
+> | Your Mac | Download |
+> |---|---|
+> | Apple Silicon — M1, M2, M3, M4 | `SocialMCP-arm64.dmg` |
+> | Intel | `SocialMCP-x86_64.dmg` |
+>
+> Not sure?  menu → **About This Mac**. "Apple M*" means Apple Silicon;
+> "Intel Core" means Intel. Or run `uname -m` — `arm64` or `x86_64`.
+>
+> If you pick wrong, macOS reports that the app is damaged or cannot be opened.
+> Nothing is broken: delete it and download the other file.
+
 Then: [**5-minute quick start**](QUICKSTART.md) · [What it can do](#what-you-can-do-with-it)
 
 **Any platform, from the command line** — installed into its own isolated
@@ -329,6 +343,22 @@ Keyword (FTS5, BM25-weighted toward names and invite notes) and semantic
 `"GTM background"` works without keyword overlap and `"Stripe"` still ranks the
 literal match first. Structured filters are plain SQL predicates applied before
 fusion — exact, never approximate.
+
+## Why there are two Mac downloads
+
+The app carries its own Python interpreter, which is how it runs on a Mac with
+no Python installed. That interpreter is a compiled binary, so it is built for
+one processor family at a time.
+
+A single universal build is not possible here: macOS universal binaries require
+*every* bundled library to contain both architectures, and some of this
+project's dependencies publish single-architecture wheels only. Rather than
+drop those dependencies or ship something that silently fails on half of all
+Macs, there are two files.
+
+Installing from the command line sidesteps this entirely — `uv tool` and `pipx`
+build against whatever Python you already have, on any architecture, including
+Linux and Windows.
 
 ## Removing it
 
