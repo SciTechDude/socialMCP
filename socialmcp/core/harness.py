@@ -225,11 +225,17 @@ class Harness:
             log.info("harness: %s already ingested, skipped", stats.archive)
             return
         self._ingests += 1
-        summary = (
-            f"Processed {stats.archive}: {stats.contacts_new} new contacts, "
-            f"{stats.contacts_updated} updated, {stats.interactions_new} interactions, "
-            f"{stats.history_changes} job changes, {stats.pending_invitations} invites still pending"
-        )
+        parts = [f"{stats.contacts_new} new contacts"]
+        if stats.contacts_updated:
+            parts.append(f"{stats.contacts_updated} updated")
+        if stats.contacts_unchanged:
+            parts.append(f"{stats.contacts_unchanged} unchanged")
+        if stats.interactions_new:
+            parts.append(f"{stats.interactions_new} interactions")
+        if stats.history_changes:
+            parts.append(f"{stats.history_changes} job changes")
+        parts.append(f"{stats.pending_invitations} invites still pending")
+        summary = f"Processed {stats.archive}: " + ", ".join(parts)
         if stats.clusters_created:
             summary += f", {stats.clusters_created} new event cluster(s)"
         self._event(

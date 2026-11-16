@@ -233,11 +233,17 @@ def _ingest_directory(
     key_to_id: dict[str, int] = {}
     touched: set[int] = set()
     for key, record in contacts.items():
-        contact_id, created, history_rows = _upsert_contact(db, record, archive_id, now, ctx)
+        contact_id, created, changed, history_rows = _upsert_contact(db, record, archive_id, now, ctx)
         key_to_id[key] = contact_id
         touched.add(contact_id)
-        stats.contacts_new += int(created)
-        stats.contacts_updated += int(not created)
+        if created:
+            stats.contacts_new += 1
+        elif changed:
+            stats.contacts_updated += 1
+        else:
+            # Re-ingesting an overlapping archive matches everyone without
+            # changing anything; reporting that as "updated" is misleading.
+            stats.contacts_unchanged += 1
         stats.history_changes += history_rows
 
     for old_key, new_key in aliases.items():
@@ -275,10 +281,11 @@ def _ingest_directory(
         _move_processed(archive_file, config, stats)
 
     log.info(
-        "ingested %s: +%d contacts, %d updated, +%d interactions, %d job changes",
+        "ingested %s: +%d contacts, %d updated, %d unchanged, +%d interactions, %d job changes",
         archive_name,
         stats.contacts_new,
         stats.contacts_updated,
+        stats.contacts_unchanged,
         stats.interactions_new,
         stats.history_changes,
     )
@@ -465,8 +472,12 @@ def _upsert_contact(
     archive_id: int,
     now: str,
     ctx: ArchiveContext,
-) -> tuple[int, bool, int]:
-    """Insert or update one contact. Returns (contact_id, created, history_rows)."""
+) -> tuple[int, bool, bool, int]:
+    """Insert or update one contact.
+
+    Returns (contact_id, created, changed, history_rows), where `changed` is
+    False when the record matched an existing row with nothing to write.
+    """
     existing = _find_existing(db, record, ctx)
 
     if existing is None:
@@ -506,7 +517,7 @@ def _upsert_contact(
         )
         contact_id = int(cursor.lastrowid)
         _register_identities(db, contact_id, record)
-        return contact_id, True, 0
+        return contact_id, True, True, 0
 
     contact_id = int(existing["id"])
     updates: dict[str, Any] = {}
@@ -564,15 +575,19 @@ def _upsert_contact(
         if not clash:
             updates["source_key"] = handle
 
-    if updates:
+    changed = bool(updates)
+    if changed:
         updates["last_archive_id"] = archive_id
         updates["updated_at"] = now
         assignments = ", ".join(f'"{k}" = :{k}' for k in updates)
         db.execute(
             f"UPDATE contacts SET {assignments} WHERE id = :cid", {**updates, "cid": contact_id}
         )
+    else:
+        # Still record that this archive saw them, without touching updated_at.
+        db.execute("UPDATE contacts SET last_archive_id = ? WHERE id = ?", (archive_id, contact_id))
     _register_identities(db, contact_id, record)
-    return contact_id, False, history_rows
+    return contact_id, False, changed, history_rows
 
 
 def _find_existing(db: Database, record: ContactRecord, ctx: ArchiveContext) -> Any:

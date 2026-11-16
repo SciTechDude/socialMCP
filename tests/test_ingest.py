@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import zipfile
 from pathlib import Path
 
@@ -191,3 +192,34 @@ def test_drop_folder_archive_is_moved_after_ingest(
     ingest_path(db, config, dropped)
     assert not dropped.exists()
     assert (config.archive_dir / "export.zip").exists()
+
+
+def test_identical_redrop_reports_unchanged_not_updated(
+    db: Database, config: Config, linkedin_dir: Path, tmp_path: Path
+):
+    """A re-packaged export with the same content must look like a no-op.
+
+    LinkedIn's "Complete" archive contains the same Connections/Invitations/
+    messages files as the basic one plus extra files we don't parse, so it has a
+    different SHA-256 and is genuinely re-ingested. Everyone must match in
+    place: no duplicates, no phantom interactions, no false job changes, and the
+    report must say "unchanged" rather than claiming hundreds of updates.
+    """
+    first = ingest_path(db, config, linkedin_dir)
+    assert first.contacts_new == 12
+
+    # Same data, different archive identity (extra unparsed file).
+    repackaged = tmp_path / "complete"
+    shutil.copytree(linkedin_dir, repackaged)
+    (repackaged / "SearchQueries.csv").write_text("Time,Search Query\n2025-10-13,ai week\n")
+
+    second = ingest_path(db, config, repackaged)
+
+    assert second.skipped_duplicate is False      # it really was processed
+    assert second.contacts_new == 0
+    assert second.contacts_updated == 0           # nothing actually changed
+    assert second.contacts_unchanged == 12
+    assert second.interactions_new == 0
+    assert second.history_changes == 0
+    assert db.scalar("SELECT COUNT(*) FROM contacts") == 12
+    assert db.scalar("SELECT COUNT(*) FROM archives") == 2
