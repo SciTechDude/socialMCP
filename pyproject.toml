@@ -32,6 +32,10 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
 ]
+# Only needed to build the macOS app bundle; not a runtime dependency.
+package = [
+    "pyinstaller>=6.6",
+]
 
 [project.scripts]
 socialmcp = "socialmcp.cli:main"

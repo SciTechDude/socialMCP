@@ -60,10 +60,22 @@ PRIVATE.md
 __pycache__/
 *.py[cod]
 *.egg-info/
+
+# Build artifacts. Installers are published as GitHub Releases, never
+# committed: binaries bloat history permanently, and a release asset gives
+# version tags, changelogs and download counts for free. The build scripts
+# themselves ARE committed, so anyone can reproduce the installer from source
+# and verify it matches — which matters for a tool that reads private data.
 build/
 dist/
-.venv/
-venv/
+*.dmg
+*.pkg
+*.app/
+.venv
+.venv-*
+venv
+venv-*
+*.venv
 .pytest_cache/
 .ruff_cache/
 .coverage

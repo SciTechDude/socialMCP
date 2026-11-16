@@ -24,6 +24,34 @@ Assistant:  7 people, 13-15 Oct. Four are still cold:
 > **Not a developer?** Follow [QUICKSTART.md](QUICKSTART.md) instead — five
 > steps, no config files to edit. `socialmcp setup` connects your AI app for you.
 
+## Get it
+
+**Mac, no setup** — [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases/latest)
+→ drag to Applications → double-click. It finds your AI app, connects itself,
+and opens the folder to drop your LinkedIn export into. No Python, no terminal.
+
+Then: [**5-minute quick start**](QUICKSTART.md) · [What it can do](#what-you-can-do-with-it)
+
+**Any platform, from the command line** — installed into its own isolated
+environment, never into your system Python:
+
+```bash
+uv tool install git+https://github.com/SciTechDude/socialMCP.git
+# or: pipx install git+https://github.com/SciTechDude/socialMCP.git
+
+socialmcp setup        # connects the MCP clients you have installed
+socialmcp drop         # opens the folder for your export
+socialmcp ingest
+```
+
+`uv tool` and `pipx` each create a private virtualenv for the app and put its
+commands on your PATH. **Avoid a bare `pip install`** — it would add
+dependencies to whichever interpreter happens to be active, which on many
+systems is the one the OS relies on.
+
+Requires Python 3.11+. Linux and Windows are supported this way; the Mac app is
+the same software with its own interpreter inside.
+
 ## Why this exists
 
 Networking at a fast-paced event creates a memory gap: three days later you have
@@ -84,35 +112,30 @@ Each of these has caveats worth knowing — see [CAPABILITIES.md](CAPABILITIES.m
 | **Local-first privacy** | Contacts and DM history live in one SQLite file on your machine. Embeddings default to local Ollama. Cloud LLM keys are strictly opt-in. |
 | **Contributor-extensible** | New sources are one module implementing `BaseAdapter`. No schema changes. |
 
-## Install
-
-Requires Python 3.11+.
-
-```bash
-pip install git+https://github.com/SciTechDude/socialMCP.git
-socialmcp setup      # finds your AI apps and connects them
-socialmcp drop       # opens the folder to put your LinkedIn .zip in
-socialmcp ingest
-socialmcp doctor     # checks everything, explains any problem in plain English
-```
-
-For development work:
+## Install from source
 
 ```bash
 git clone https://github.com/SciTechDude/socialMCP.git
 cd socialMCP
+python3 -m venv .venv            # keeps everything out of your system Python
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
+pytest
 ```
 
-Optional, for semantic search (recommended):
+The venv is required, not a nicety: installing the dependencies into a system
+or `mise`-managed interpreter is how you end up debugging an unrelated package
+conflict later. `.venv/` is gitignored.
+
+Optional, for meaning-based search (recommended, and entirely local):
 
 ```bash
-# sqlite-vec comes with the install; you also need a local embedding model
-ollama pull nomic-embed-text
+ollama pull nomic-embed-text    # install Ollama from ollama.com first
+socialmcp reindex
 ```
 
-Without Ollama, SocialMCP runs fine — search falls back to SQLite FTS5 keyword
-matching plus exact filters.
+Without it, search falls back to SQLite FTS5 keyword matching and everything
+else works unchanged.
 
 ## Get your data
 
@@ -307,6 +330,23 @@ Keyword (FTS5, BM25-weighted toward names and invite notes) and semantic
 literal match first. Structured filters are plain SQL predicates applied before
 fusion — exact, never approximate.
 
+## Removing it
+
+```bash
+socialmcp uninstall              # disconnect from AI apps; data kept
+socialmcp uninstall --dry-run    # show exactly what would change
+socialmcp uninstall --purge-data # also delete the database and folders
+```
+
+Mac app users can click **Disconnect** on the app's second launch instead.
+
+Uninstall is the mirror of setup and holds to the same rule: it deletes only
+the `socialmcp` entry it created, leaves other MCP servers and unrelated
+settings alone, backs up every file it edits, and refuses to rewrite a config
+file it cannot parse. Your data is never deleted unless you ask for it
+explicitly — notes and event names exist nowhere else and no fresh export
+restores them.
+
 ## Privacy
 
 Everything is a local file. The server speaks stdio to its parent process and
@@ -343,23 +383,20 @@ server rather than guessing.
 ## Development
 
 ```bash
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest              # 63 tests, no network access required
+pytest              # no network access required
 ruff check .
 ```
 
 Fixtures in `tests/fixtures/linkedin/` are a hand-written, fully synthetic
 export that reproduces every quirk above. Use them instead of your real data.
 
-## Roadmap
+## Contributing
 
-- **Phase 1 & 2 (done):** schema, hardened ingest pipeline, LinkedIn adapter,
-  event clustering, harness, MCP tools and resources.
-- **Phase 3:** more adapters (Instagram/Facebook JSON, X archives, vCard/CSV),
-  richer follow-up prompting, optional recurring reminders.
-
-Adapters are the easiest place to contribute — one module, no schema change.
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Adapters for other platforms are the easiest place to start: one module under
+`socialmcp/adapters/<source>/`, no schema change, nothing shared to edit. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- PyInstaller's bootloader maps its own code pages, which the hardened
+         runtime blocks without this. Required for any PyInstaller app that is
+         notarized. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- Needed to load vec0.dylib, the sqlite-vec extension, which is signed
+         separately rather than by us. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- Outbound only, and only to a local embedding model if the user runs
+         one. No listening socket: the MCP transport is stdio. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>

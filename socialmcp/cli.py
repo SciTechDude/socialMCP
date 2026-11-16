@@ -7,6 +7,7 @@ Start here if you have never used a terminal:
     socialmcp ingest                # read whatever is in that folder
     socialmcp doctor                # check everything and tell you what to fix
     socialmcp can-do                # list what it can and cannot do
+    socialmcp uninstall             # disconnect cleanly; add --purge-data to delete the database
 
 Everything below is for development and scripting:
 
@@ -57,6 +58,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="check your setup and explain how to fix problems")
     sub.add_parser("can-do", help="list what SocialMCP can and cannot do")
+
+    p_uninstall = sub.add_parser(
+        "uninstall", help="disconnect from your AI apps, and optionally delete your data"
+    )
+    p_uninstall.add_argument(
+        "--purge-data",
+        action="store_true",
+        help="also delete the local database, drop folder and processed archives",
+    )
+    p_uninstall.add_argument(
+        "--dry-run", action="store_true", help="show what would be removed, change nothing"
+    )
+    p_uninstall.add_argument(
+        "--yes", action="store_true", help="skip the confirmation prompt"
+    )
     sub.add_parser("drop", help="open the folder where LinkedIn .zip files go")
     sub.add_parser("serve", help="run the MCP server over stdio")
     sub.add_parser("stats", help="print local CRM stats")
@@ -198,6 +214,83 @@ def _cmd_drop(config) -> int:
     return 0
 
 
+def _cmd_uninstall(args: argparse.Namespace, config) -> int:
+    """Undo exactly what setup did, and nothing more.
+
+    Two separate things, deliberately kept apart: disconnecting from AI apps is
+    reversible and safe, while deleting the database destroys notes and event
+    names the user cannot get back from a fresh export. The second never
+    happens unless asked for explicitly.
+    """
+    from .clients import unregister_all
+
+    data_paths = [config.db_path, config.drop_dir, config.archive_dir]
+    present = [p for p in data_paths if p.exists()]
+
+    print("This will remove SocialMCP's entry from your AI apps' settings.")
+    print("Other MCP servers and unrelated settings are left untouched, and")
+    print("every file changed is backed up first.\n")
+
+    if args.purge_data:
+        print("It will ALSO delete your local data:")
+        for path in present:
+            print(f"    {path}")
+        print("\n  Your notes, event names and ingest history go with it. A fresh")
+        print("  export restores contacts but not the notes you wrote.\n")
+    elif present:
+        print("Your data is kept:")
+        for path in present:
+            print(f"    {path}")
+        print("  (Add --purge-data to delete it, or remove the folder yourself later.)\n")
+
+    if not args.dry_run and not args.yes:
+        answer = input("Continue? [y/N] ").strip().lower()
+        if answer not in {"y", "yes"}:
+            print("Cancelled. Nothing was changed.")
+            return 1
+
+    results = unregister_all(dry_run=args.dry_run)
+    if not results:
+        print("No AI app was configured for SocialMCP.")
+    for result in results:
+        print(f"  {SYMBOL.get('ok' if result.status in {'removed', 'would_remove'} else 'warn')}"
+              f"{result.client}: {result.status}")
+        if result.backup:
+            print(f"         (previous settings saved to {result.backup})")
+        elif result.detail and result.status == "failed":
+            print(f"         {result.detail}")
+
+    if args.purge_data:
+        import shutil as _shutil
+
+        for path in present:
+            if args.dry_run:
+                print(f"  would delete {path}")
+                continue
+            try:
+                if path.is_dir():
+                    _shutil.rmtree(path)
+                else:
+                    path.unlink()
+                # The WAL files beside a SQLite database are easy to overlook.
+                for suffix in ("-wal", "-shm"):
+                    sidecar = path.with_name(path.name + suffix)
+                    if sidecar.exists():
+                        sidecar.unlink()
+                print(f"  deleted {path}")
+            except OSError as exc:
+                print(f"  could not delete {path}: {exc}")
+
+    print()
+    if args.dry_run:
+        print("Dry run: nothing was changed.")
+    else:
+        print("Done. Restart your AI apps for the change to take effect.")
+        print("To finish removing the app itself, drag SocialMCP to the Trash")
+        print("(or `uv tool uninstall socialmcp` / `pipx uninstall socialmcp`).")
+    return 0
+
+
 def _dispatch(args: argparse.Namespace, config, db) -> int:
     if args.command == "setup":
         return _cmd_setup(args, config)
@@ -213,6 +306,9 @@ def _dispatch(args: argparse.Namespace, config, db) -> int:
 
     if args.command == "drop":
         return _cmd_drop(config)
+
+    if args.command == "uninstall":
+        return _cmd_uninstall(args, config)
 
     if args.command == "stats":
         _print(db.stats())

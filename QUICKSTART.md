@@ -38,44 +38,43 @@ up to 24 hours. Carry on with Step 2 while you wait.
 
 ## Step 2 — Install SocialMCP
 
-You need **Python 3.11 or newer**. To check, open a terminal and type:
+**On a Mac, this is one download.**
 
-- **Mac:** press `Cmd+Space`, type `Terminal`, press Enter. Then type `python3 --version`
-- **Windows:** press `Start`, type `PowerShell`, press Enter. Then type `python --version`
+1. [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases/latest)
+   (pick the file matching your Mac — *Apple Silicon* for M1/M2/M3/M4,
+   *Intel* otherwise; if unsure, click the Apple menu → About This Mac).
+2. Open the downloaded file and drag **SocialMCP** into your Applications folder.
+3. Double-click it.
 
-If it says 3.11 or higher, you're set. If not, or if it says "command not
-found", install Python from [python.org/downloads](https://www.python.org/downloads/)
-(click the big yellow button, run the installer, and **tick "Add Python to
-PATH"** if Windows offers it).
-
-Then install SocialMCP by copying this line into the same terminal window and
-pressing Enter:
-
-```
-pip install socialmcp
-```
-
-On Mac, if that complains about permissions, use `pip3 install --user socialmcp`.
+That is the whole install. There is no Python to set up and no terminal to
+open — everything it needs is inside the app.
 
 <details>
-<summary>Not published to PyPI yet? Install from GitHub instead</summary>
+<summary>Windows, Linux, or if you would rather use the command line</summary>
+
+You need **Python 3.11 or newer** (check with `python3 --version`; if it is
+missing or older, install it from [python.org/downloads](https://www.python.org/downloads/)
+and tick "Add Python to PATH" if Windows offers it).
+
+Then install it in its own private environment, so nothing is added to the
+Python your system uses:
 
 ```
-pip install git+https://github.com/SciTechDude/socialMCP.git
+pip install --user pipx
+pipx install git+https://github.com/SciTechDude/socialMCP.git
 ```
+
+(If you already use `uv`: `uv tool install git+https://github.com/SciTechDude/socialMCP.git`.)
+
+Both commands keep SocialMCP and its dependencies in a folder of their own and
+make `socialmcp` available to type. Nothing else on your computer changes, and
+uninstalling removes all of it.
 </details>
-
----
 
 ## Step 3 — Connect it to your AI app
 
-Type this one command:
-
-```
-socialmcp setup
-```
-
-It finds the AI apps already on your computer — Claude Desktop, Claude Code,
+The app does this for you when you first open it. It finds the AI apps already
+on your computer — Claude Desktop, Claude Code,
 Cursor, Windsurf, VS Code, Zed — and connects them for you. You don't have to
 edit any settings files. It makes a backup of anything it changes.
 
@@ -90,8 +89,10 @@ Connecting SocialMCP to the AI apps on this computer...
          Restart Cursor, then check Settings -> MCP.
 ```
 
+If you installed from the command line instead, run `socialmcp setup`.
+
 **Don't have an AI app yet?** Install [Claude Desktop](https://claude.ai/download)
-(free), then run `socialmcp setup` again.
+(free), then open SocialMCP again.
 
 ---
 
@@ -99,13 +100,8 @@ Connecting SocialMCP to the AI apps on this computer...
 
 When LinkedIn's email arrives, download the `.zip` file. **Don't unzip it.**
 
-Then type:
-
-```
-socialmcp drop
-```
-
-This opens the folder where the file goes. Drag the `.zip` into it. Then type:
+SocialMCP opens the right folder for you when you first run it. (From the
+command line: `socialmcp drop`.) Drag the `.zip` into it. Then type:
 
 ```
 socialmcp ingest
@@ -156,7 +152,7 @@ Example output:
   OK   Python version                 Python 3.12.11
   OK   Your contacts                  579 people, 5 invites pending
   !    Smart search (sqlite-vec)      not installed, so searches match words literally
-       -> Run: pip install sqlite-vec    (then: socialmcp reindex)
+       -> sqlite-vec should already be inside the app - install the latest version
   !    Claude Desktop                 installed but not connected yet
        -> Run: socialmcp setup
 ```
@@ -166,11 +162,34 @@ Common issues:
 | What you see | What to do |
 |---|---|
 | AI app doesn't show SocialMCP | Quit it **completely** and reopen. Config is only read at startup. |
-| "command not found: socialmcp" | Close and reopen your terminal. If it persists, use `python3 -m socialmcp.cli` instead of `socialmcp`. |
+| "command not found: socialmcp" | Close and reopen your terminal so it picks up the new command. If you used `pipx`, run `pipx ensurepath` once. (Not needed at all if you installed the Mac app.) |
 | Searches feel too literal | Install [Ollama](https://ollama.com), then run `ollama pull nomic-embed-text` and `socialmcp reindex`. This adds meaning-based search and still runs entirely on your computer. |
 | "no adapter recognized" | You unzipped the file, or it isn't a LinkedIn archive. Use the original `.zip` as downloaded. |
 
 ---
+
+## Removing it
+
+**Disconnect it from your AI apps** — open SocialMCP again and click
+**Disconnect**. Your data stays, so reconnecting later resumes exactly where you
+left off. (From a terminal: `socialmcp uninstall`.)
+
+**Delete everything** — after disconnecting, choose **Delete my data**. That
+removes the database, the drop folder and processed archives. Your own notes and
+the event names you chose are *not* in any LinkedIn export, so they cannot be
+recovered afterwards.
+
+**Remove the app** — drag SocialMCP from Applications to the Trash.
+
+Nothing else is left behind. SocialMCP only ever writes to two places: its own
+folder in `~/Library/Application Support/SocialMCP`, and your AI apps' settings
+files (merged, never overwritten, and backed up before each change).
+
+### If the install went wrong
+
+Because it is a plain app and not a system installer, there is nothing to
+repair: drag SocialMCP to the Trash and drag it across again from the download.
+Replacing the app never touches your data or your AI apps' settings.
 
 ## Optional: better search
 
