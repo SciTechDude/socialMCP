@@ -17,7 +17,9 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-DEFAULT_HOME = Path(os.environ.get("SOCIALMCP_HOME", Path.home() / ".socialmcp"))
+# Pure constant: the environment is read in load_config() only, so that
+# "did the user choose a home?" stays answerable here.
+DEFAULT_HOME = Path.home() / ".socialmcp"
 
 # The drop zone is split by source so an archive's provenance is unambiguous
 # before a single byte is parsed: a .zip in drop-archive/linkedin/ is routed
@@ -80,9 +82,16 @@ class Config:
     def __post_init__(self) -> None:
         self.home = Path(self.home).expanduser()
         self.db_path = Path(self.db_path).expanduser() if self.db_path else self.home / "socialmcp.db"
-        self.drop_dir = (
-            Path(self.drop_dir).expanduser() if self.drop_dir else _default_drop_dir(self.home)
-        )
+        if self.drop_dir:
+            self.drop_dir = Path(self.drop_dir).expanduser()
+        elif self.home != DEFAULT_HOME:
+            # An explicitly chosen home owns everything under it. Without this,
+            # setting SOCIALMCP_HOME would move the database but leave the drop
+            # zone pointing at whatever source checkout the package was
+            # installed from — which is where an editable install lives.
+            self.drop_dir = self.home / "drop-archive"
+        else:
+            self.drop_dir = _default_drop_dir(self.home)
         self.archive_dir = (
             Path(self.archive_dir).expanduser()
             if self.archive_dir

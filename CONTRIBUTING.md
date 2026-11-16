@@ -132,3 +132,37 @@ If an export shape changes, open an issue with: the file name, the old and new
 headers or JSON keys, the approximate date you requested the export, and a
 small anonymized sample. That is enough to fix it without anyone touching your
 real data.
+
+## Simulating a new user before you open a PR
+
+The failures that reach users are environmental, and an editable install in your
+own shell hides all of them. Two bugs shipped past a green local suite this way:
+the MCP SDK's 2.0 rename (`mcp>=1.2` resolves to 2.x, where `FastMCP` became
+`MCPServer`, so the server failed at import for anyone installing fresh), and a
+drop zone that resolved to the developer's source tree instead of the user's
+configured home.
+
+CI runs this on every push (`.github/workflows/ci.yml`, job `clean-install`).
+To run it yourself:
+
+```bash
+python -m build --wheel                    # pip install build
+python -m venv /tmp/v && /tmp/v/bin/pip install dist/*.whl
+export SOCIALMCP_HOME=/tmp/socialmcp-test SOCIALMCP_EMBED_PROVIDER=none
+/tmp/v/bin/socialmcp stats                 # scaffolds the home + drop zone
+# zip tests/fixtures/linkedin into $SOCIALMCP_HOME/drop-archive/linkedin/
+/tmp/v/bin/socialmcp ingest
+/tmp/v/bin/socialmcp search "Seattle AI Week"
+```
+
+A wheel install — not `pip install -e .` — is the point. It is the only way to
+catch `schema.sql` missing from the package, console scripts that don't
+generate, and config that silently resolves relative to a checkout.
+
+**Docker is not the right tool for this.** It hides the host-environment
+problems that actually break users, and containerizing a stdio server that
+reads a host folder and writes a host database adds volume mounts, UID
+mismatches and `host.docker.internal` indirection that no real user
+encounters — a container would report Ollama as unreachable when it is fine.
+Use Docker only to check a clean Linux userspace; use a wheel in a fresh venv
+for everything else.

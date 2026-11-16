@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from pathlib import Path
 
@@ -36,15 +37,20 @@ def server_state(db, config, linkedin_dir: Path):
     srv._state = None
 
 
+def resolve(value):
+    """mcp 1.x returns a coroutine from list_tools/list_resources; 2.x is sync."""
+    return asyncio.run(value) if inspect.isawaitable(value) else value
+
+
 def test_all_tools_are_registered():
-    tools = asyncio.run(srv.mcp.list_tools())
+    tools = resolve(srv.mcp.list_tools())
     assert {t.name for t in tools} >= EXPECTED_TOOLS
     # Every tool needs a description: it is the model's only usage documentation.
     assert all(t.description for t in tools)
 
 
 def test_resources_are_registered():
-    uris = {str(r.uri) for r in asyncio.run(srv.mcp.list_resources())}
+    uris = {str(r.uri) for r in resolve(srv.mcp.list_resources())}
     assert {"socialmcp://briefing", "socialmcp://stats", "socialmcp://clusters"} <= uris
 
 

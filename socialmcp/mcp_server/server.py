@@ -24,7 +24,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+# The MCP Python SDK renamed FastMCP to MCPServer in 2.0. Everything this
+# server uses — the constructor's name/instructions/lifespan, the .tool() and
+# .resource() decorators, and .run()'s stdio default — is identical across the
+# two, so supporting both is a two-line import rather than forcing every user
+# onto one SDK major. Caught by installing from a clean venv, where
+# `mcp>=1.2.0` resolves to 2.x and v1 code fails at import.
+try:  # mcp >= 2.0
+    from mcp.server.mcpserver import MCPServer as _MCPServerImpl
+except ImportError:  # mcp 1.x
+    from mcp.server.fastmcp import FastMCP as _MCPServerImpl
 
 from ..adapters import available_adapters
 from ..config import Config, load_config
@@ -81,7 +90,7 @@ def state() -> ServerState:
 
 
 @asynccontextmanager
-async def lifespan(_server: FastMCP) -> AsyncIterator[ServerState]:
+async def lifespan(_server: _MCPServerImpl) -> AsyncIterator[ServerState]:
     """Open the DB and start the background harness for the session's lifetime."""
     global _state
     config = load_config()
@@ -102,7 +111,7 @@ async def lifespan(_server: FastMCP) -> AsyncIterator[ServerState]:
         _state = None
 
 
-mcp = FastMCP("socialmcp", instructions=INSTRUCTIONS, lifespan=lifespan)
+mcp = _MCPServerImpl("socialmcp", instructions=INSTRUCTIONS, lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
