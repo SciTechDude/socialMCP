@@ -6,6 +6,7 @@ Start here if you have never used a terminal:
     socialmcp drop                  # open the folder to put your LinkedIn .zip in
     socialmcp ingest                # read whatever is in that folder
     socialmcp doctor                # check everything and tell you what to fix
+    socialmcp can-do                # list what it can and cannot do
 
 Everything below is for development and scripting:
 
@@ -55,6 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
                          help="show what would change without writing anything")
 
     sub.add_parser("doctor", help="check your setup and explain how to fix problems")
+    sub.add_parser("can-do", help="list what SocialMCP can and cannot do")
     sub.add_parser("drop", help="open the folder where LinkedIn .zip files go")
     sub.add_parser("serve", help="run the MCP server over stdio")
     sub.add_parser("stats", help="print local CRM stats")
@@ -202,6 +204,12 @@ def _dispatch(args: argparse.Namespace, config, db) -> int:
 
     if args.command == "doctor":
         return _cmd_doctor(config)
+
+    if args.command == "can-do":
+        from . import capabilities
+
+        print(capabilities.as_markdown())
+        return 0
 
     if args.command == "drop":
         return _cmd_drop(config)

@@ -236,3 +236,16 @@ def test_linkedin_package_owns_both_parser_and_words():
     assert package.VOCABULARY.source == "linkedin"
     assert package.VOCABULARY.contact_noun == "connection"
     assert package.VOCABULARY.tier_labels == ("1st", "2nd+")
+
+
+def test_capabilities_document_matches_the_code():
+    """CAPABILITIES.md is generated, so it cannot drift from the tool's answer.
+
+    A stale capability document is worse than none: it promises behaviour the
+    server does not have.
+    """
+    from socialmcp import capabilities
+
+    document = Path(__file__).resolve().parent.parent / "CAPABILITIES.md"
+    assert document.is_file(), "run: socialmcp can-do > CAPABILITIES.md"
+    assert document.read_text(encoding="utf-8") == capabilities.as_markdown()

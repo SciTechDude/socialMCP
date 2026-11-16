@@ -183,10 +183,16 @@ compatibility is enforced on every CI run rather than assumed.
 | `list_pending_invitations` | Invites you sent that were never accepted — your follow-up list. |
 | `rename_event_cluster` | Turn `"13-15 Oct 2025 burst (7 connections)"` into `"Seattle AI Week 2025"`. |
 | `trigger_archive_ingest` | Ingest on demand instead of waiting for the watcher. |
+| `enrich_contact` | File something the assistant looked up from a public source, with provenance. |
+| `list_capabilities` | What it can and cannot do, in plain language — see [CAPABILITIES.md](CAPABILITIES.md). |
 | `list_event_clusters`, `network_stats`, `reindex_embeddings`, `get_network_briefing` | Housekeeping and session priming. |
 
 Resources: `socialmcp://briefing`, `socialmcp://stats`, `socialmcp://clusters`,
-`socialmcp://adapters`.
+`socialmcp://capabilities`, `socialmcp://adapters`.
+
+Not sure what to ask? `socialmcp can-do`, or just ask your assistant *"what can
+you do with my network?"* — it calls `list_capabilities` and answers from the
+server rather than guessing.
 
 ## Also usable without an AI client
 

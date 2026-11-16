@@ -294,10 +294,13 @@ def _decorate(db: Database, contact: dict[str, Any]) -> dict[str, Any]:
         )
     ]
     contact["notes"] = [
-        {"logged_at": row["occurred_at"], "note": row["body"]}
+        # `source` is None for the user's own notes and names the origin for
+        # anything looked up elsewhere — the distinction matters when deciding
+        # how much to trust a line.
+        {"logged_at": row["occurred_at"], "note": row["body"], "source": row["subject"]}
         for row in db.query(
-            "SELECT occurred_at, body FROM interactions WHERE contact_id = ? AND kind = 'note' "
-            "ORDER BY occurred_at DESC LIMIT 5",
+            "SELECT occurred_at, subject, body FROM interactions "
+            "WHERE contact_id = ? AND kind = 'note' ORDER BY occurred_at DESC LIMIT 5",
             (contact_id,),
         )
     ]

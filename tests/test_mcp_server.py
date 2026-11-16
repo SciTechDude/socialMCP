@@ -229,3 +229,72 @@ def test_completed_and_lapsed_ties_have_nobody_waiting(server_state):
     assert "waiting_on" not in digest["Priya Raghavan"]      # already connected
     assert digest["Rafael Santos"]["waiting_on"] == "them"
     assert digest["Yuki Tanaka"]["waiting_on"] == "you"
+
+
+def test_capabilities_tool_is_generic_and_honest(server_state):
+    """The helper a user reaches for first, so it must not mislead.
+
+    Capabilities are described as shapes of question, never as canned prompts
+    naming a real event or person — wording that would read as someone else's
+    network. The limits are part of the payload because a user who believes
+    this reads live data will misinterpret an empty result.
+    """
+    payload = srv.list_capabilities()
+
+    assert len(payload["capabilities"]) >= 8
+    assert payload["limits"], "limits must ship with the capabilities"
+
+    for capability in payload["capabilities"]:
+        assert capability["title"] and capability["description"]
+        assert capability["ask_like"], f"{capability['key']} has no example phrasing"
+        assert capability["tools"], f"{capability['key']} names no tool"
+
+    # Every named tool really exists, so the helper cannot promise a missing one.
+    advertised = {t for c in payload["capabilities"] for t in c["tools"]}
+    registered = {t.name for t in resolve(srv.mcp.list_tools())}
+    assert advertised <= registered, advertised - registered
+
+    # No specific event, person or company names from any one network.
+    blob = json.dumps(payload).lower()
+    for leaked in ("seattle", "linkedin.com", "priya", "marcus webb", "surf"):
+        assert leaked not in blob, f"capability text mentions {leaked!r}"
+
+    # The scraping boundary is stated, not implied.
+    assert any("never" in limit.lower() and "log" in limit.lower() for limit in payload["limits"])
+
+    assert "limits" not in srv.list_capabilities(include_limits=False)
+
+
+def test_enrich_contact_files_a_sourced_finding(server_state):
+    """Public lookups are stored with provenance, separate from the user's own notes."""
+    looked_up = srv.enrich_contact(
+        contact="Marcus Webb",
+        finding="Cascade Robotics builds warehouse automation; raised a Series A.",
+        source_url="https://example.com/news/cascade-robotics",
+    )
+    assert looked_up["full_name"] == "Marcus Webb"
+    assert looked_up["recorded_as"] == "looked up · example.com"
+    assert looked_up["unsourced"] is False
+
+    srv.log_contact_note("Marcus Webb", "My read: worth a warm intro in Q1.")
+
+    notes = srv.get_contact("Marcus Webb")["notes"]
+    by_text = {n["note"].split("\n")[0]: n for n in notes}
+
+    own = by_text["My read: worth a warm intro in Q1."]
+    assert own["source"] is None, "the user's own note must not look looked-up"
+    found = by_text["Cascade Robotics builds warehouse automation; raised a Series A."]
+    assert found["source"] == "looked up · example.com"
+    assert "https://example.com/news/cascade-robotics" in found["note"]
+
+    # Both are searchable.
+    hit = srv.search_network(query="warehouse automation", mode="keyword", limit=3)
+    assert "Marcus Webb" in [c["full_name"] for c in hit["contacts"]]
+
+
+def test_enrich_contact_flags_an_unsourced_finding(server_state):
+    result = srv.enrich_contact(contact="Marcus Webb", finding="Heard they are hiring.")
+    assert result["unsourced"] is True
+    assert result["recorded_as"] == "looked up"
+    assert srv.enrich_contact(contact="Marcus Webb", finding="   ")["error"]
+    assert srv.enrich_contact(contact="Nobody At All", finding="x")["error"] == "not_found"
