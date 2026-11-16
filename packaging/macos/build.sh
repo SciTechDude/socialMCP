@@ -196,7 +196,9 @@ This build is UNSIGNED. On this Mac it will open normally. On any other Mac,
 macOS will refuse it with "cannot be opened because the developer cannot be
 verified" — which is exactly what a user would see, so it is worth seeing once.
 
-To open it anyway while testing: right-click the app -> Open, or
+To open it anyway while testing: System Settings -> Privacy & Security ->
+Open Anyway. (Control-click -> Open stopped working in macOS 15.) Or, for a
+build you made yourself:
     xattr -dr com.apple.quarantine /Applications/SocialMCP.app
 
 Ship signed builds only. See packaging/macos/README.md.

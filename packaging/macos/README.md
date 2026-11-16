@@ -58,10 +58,13 @@ This is worth doing properly — the two most serious bugs in this project were
 both found by running it somewhere other than the development machine.
 
 1. Copy the `.dmg` across, drag the app to Applications, double-click it.
-2. **Unsigned builds will be refused** with *"cannot be opened because the
-   developer cannot be verified."* That is exactly what a user would see. To
-   continue testing: right-click the app → **Open**, or
-   `xattr -dr com.apple.quarantine /Applications/SocialMCP.app`.
+2. **Unsigned builds will be refused.** That is exactly what a user would see.
+   To continue testing, use **System Settings → Privacy & Security → Open
+   Anyway**. Apple removed the Control-click → Open shortcut in macOS 15, so
+   instructions that rely on it are wrong on current systems. From a terminal,
+   `xattr -dr com.apple.quarantine /Applications/SocialMCP.app` also works, but
+   do not put that in user-facing documentation — teaching people to strip
+   quarantine flags is worse than the problem it solves.
 3. Check the setup dialog names the AI apps actually installed on that machine.
 4. Drop a LinkedIn export in the folder it opens, then restart the AI app and
    ask it something.
