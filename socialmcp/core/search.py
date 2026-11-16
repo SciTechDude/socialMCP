@@ -21,6 +21,8 @@ from ..config import Config
 from .db import Database, serialize_f32
 from .embeddings import EmbeddingError, embedding_text, make_embedder
 from .normalize import slugify
+from .vocabulary import breakdown as relationship_breakdown
+from .vocabulary import describe_rows
 
 log = logging.getLogger("socialmcp.search")
 
@@ -110,69 +112,15 @@ class SearchResult:
 # 'unknown_invite' is honest, not a gap: LinkedIn's Invitations.csv only covers
 # a recent window, so for older connections the archive simply does not say who
 # sent the request.
-RELATIONSHIP_SQL = """
-    CASE
-      WHEN c.status = 'connected' AND c.origin_direction = 'outbound'
-                                     THEN 'i_invited_they_accepted'
-      WHEN c.status = 'connected' AND c.origin_direction = 'inbound'
-                                     THEN 'they_invited_i_accepted'
-      WHEN c.status = 'connected'    THEN 'connected_unknown_invite'
-      WHEN c.status = 'pending'  AND c.invite_lapsed_at IS NOT NULL
-                                     THEN 'i_invited_it_lapsed'
-      WHEN c.status = 'received' AND c.invite_lapsed_at IS NOT NULL
-                                     THEN 'they_invited_it_lapsed'
-      WHEN c.status = 'pending'      THEN 'i_invited_not_yet_accepted'
-      WHEN c.status = 'received'     THEN 'they_invited_i_have_not_accepted_yet'
-      WHEN c.status = 'withdrawn'    THEN 'i_invited_then_withdrew'
-      ELSE 'unknown'
-    END
-"""
-
-RELATIONSHIP_MEANING = {
-    "i_invited_they_accepted": "you sent the invitation and they accepted",
-    "they_invited_i_accepted": "they sent the invitation and you accepted",
-    "i_invited_not_yet_accepted": "your invitation is still unanswered",
-    "they_invited_i_have_not_accepted_yet": (
-        "their invitation is still sitting unanswered by you"
-    ),
-    "i_invited_it_lapsed": (
-        "your invitation disappeared from a later export without connecting - "
-        "declined, withdrawn or expired; LinkedIn's export does not say which"
-    ),
-    "they_invited_it_lapsed": (
-        "their invitation disappeared from a later export without connecting - "
-        "you declined or ignored it, or it expired"
-    ),
-    "i_invited_then_withdrew": "you withdrew the invitation",
-    "connected_unknown_invite": (
-        "connected, but the export's invitation history (a rolling ~6-month "
-        "window) does not reach back far enough to say who invited whom"
-    ),
-    "unknown": "no invitation or connection record",
-}
-
-
-def relationship_breakdown(people: list[dict[str, Any]], key: str = "how") -> dict[str, Any]:
-    """Counts per category, plus a legend for only the categories present."""
-    counts: dict[str, int] = {}
-    for person in people:
-        label = person.get(key)
-        if label:
-            counts[label] = counts.get(label, 0) + 1
-    ordered = dict(sorted(counts.items(), key=lambda kv: -kv[1]))
-    return {
-        "counts": ordered,
-        "legend": {k: RELATIONSHIP_MEANING[k] for k in ordered if k in RELATIONSHIP_MEANING},
-    }
-
-
+# Raw, platform-neutral columns only. Naming happens in Python, per source, via
+# core/vocabulary.py — so this query already works for a platform that does not
+# exist yet, and adding one changes no SQL here.
 CONTACT_COLUMNS = """
     c.id, c.source, c.full_name, c.company, c."position", c.headline, c.location,
     c.email, c.profile_url, c.status, c.origin_note, c.origin_direction,
-    c.invited_at, c.connected_on, c.last_interaction_at,
-    COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) AS met_on,
-    () AS how
-""".replace("()", RELATIONSHIP_SQL)
+    c.invite_lapsed_at, c.invited_at, c.connected_on, c.last_interaction_at,
+    COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) AS met_on
+"""
 
 
 def search_network(
@@ -331,6 +279,8 @@ def _to_fts_query(text: str) -> str:
 
 def _decorate(db: Database, contact: dict[str, Any]) -> dict[str, Any]:
     """Attach the context a human actually wants to see with a search hit."""
+    # Platform-specific naming is applied here, once, from the row's source.
+    describe_rows([contact])
     contact_id = int(contact["id"])
     contact["events"] = [
         row["name"]

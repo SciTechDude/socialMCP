@@ -26,6 +26,69 @@ pytest
 ruff check .
 ```
 
+## Where a new platform's code goes
+
+Everything about one platform lives in one directory, and nothing about it
+lives anywhere else:
+
+```
+socialmcp/adapters/<source>/
+├── __init__.py       registers the adapter and its vocabulary
+├── adapter.py        parses that platform's export files
+├── vocabulary.py     what that platform calls a tie
+└── urls.py           that platform's profile-URL rules (if it has any)
+```
+
+Shared code is platform-neutral and must stay that way:
+
+| Layer | Knows about platforms? |
+|---|---|
+| `core/schema.sql` | No. A tie is `(status, origin_direction, invite_lapsed_at)`. |
+| `core/search.py` | No. Queries select raw columns; naming happens in Python. |
+| `core/vocabulary.py` | Only the abstraction — `EdgeState` and the `Vocabulary` contract. |
+| `mcp_server/server.py` | No. Tools call `describe_rows()` and get per-source labels. |
+| `adapters/<source>/` | **Yes. All of it.** |
+
+`tests/test_vocabulary.py::test_core_contains_no_platform_terminology` enforces
+this by walking the AST of every module in `core/` and failing if a platform's
+word appears in a string value. Comments and docstrings may discuss platforms;
+data a user or model reads may not.
+
+### Naming ties on a platform that is not LinkedIn
+
+LinkedIn is symmetric: an invitation is sent, accepted or ignored, and the
+result has a degree (1st / 2nd+). X and Instagram are asymmetric — following
+someone is not a request and needs no approval. Facebook is symmetric but calls
+it friendship and shows no degree.
+
+The pipeline resolves all of these to a neutral `EdgeState`
+(`MUTUAL`, `OUTBOUND_PENDING`, `INBOUND_PENDING`, `OUTBOUND_LAPSED`, …), and
+your `Vocabulary` names those states in your platform's words:
+
+```python
+VOCABULARY = register_vocabulary(
+    Vocabulary(
+        source="x_twitter",
+        contact_noun="follower",
+        request_noun="follow",
+        labels={
+            EdgeState.MUTUAL: "we_follow_each_other",
+            EdgeState.OUTBOUND_PENDING: "i_follow_them",
+            EdgeState.INBOUND_PENDING: "they_follow_me",
+        },
+        meanings={"i_follow_them": "you follow them, they do not follow back"},
+        tier_labels=None,   # X has no degree; the field is then omitted entirely
+    )
+)
+```
+
+Set `labeller=` when a single state maps to more than one word on your platform
+— LinkedIn uses it to split `MUTUAL` by who sent the invitation.
+
+A result set may mix sources, and each row is labelled in its own platform's
+words. That is why naming is done in Python rather than in SQL: one `CASE`
+expression would have to impose one platform's metaphor on every row.
+
 ## Writing an adapter
 
 ### 1. What your adapter must do

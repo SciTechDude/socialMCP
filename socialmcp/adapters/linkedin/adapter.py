@@ -43,7 +43,6 @@ from ...core.normalize import (
     clean,
     full_name,
     name_key,
-    normalize_profile_url,
     parse_date,
     parse_timestamp,
     profile_handle,
@@ -59,10 +58,12 @@ from ..base import (
     read_csv_rows,
     register,
 )
+from .urls import normalize as normalize_profile_url
 
 log = logging.getLogger("socialmcp.adapters.linkedin")
 
 SOURCE = "linkedin"
+
 
 CONNECTIONS_HEADERS = ("first_name", "last_name")
 INVITATIONS_HEADERS = ("from", "to", "sent_at")

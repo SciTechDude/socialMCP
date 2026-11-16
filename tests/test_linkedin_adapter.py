@@ -8,10 +8,10 @@ import pytest
 
 from socialmcp.adapters.base import ArchiveContext, HeaderNotFoundError, read_csv_rows
 from socialmcp.adapters.linkedin.adapter import LinkedInAdapter
+from socialmcp.adapters.linkedin.urls import normalize as normalize_profile_url
 from socialmcp.core.models import ContactRecord, InteractionRecord
 from socialmcp.core.normalize import (
     name_key,
-    normalize_profile_url,
     parse_date,
     parse_timestamp,
 )

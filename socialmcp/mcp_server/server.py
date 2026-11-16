@@ -42,16 +42,16 @@ from ..core.db import Database, open_database
 from ..core.harness import Harness
 from ..core.ingest import IngestError, add_note, ingest_path, refresh_embeddings
 from ..core.search import (
-    RELATIONSHIP_SQL,
     AmbiguousContactError,
     SearchFilters,
     get_contact_detail,
-    relationship_breakdown,
     resolve_contact,
 )
 from ..core.search import (
     search_network as run_search,
 )
+from ..core.vocabulary import breakdown as relationship_breakdown
+from ..core.vocabulary import describe_rows
 
 log = logging.getLogger("socialmcp.server")
 
@@ -68,8 +68,14 @@ How to work with it:
 * Event clusters are auto-detected bursts of connections. New ones have
   placeholder names like "12-15 Oct 2025 burst (17 connections)" — if the user
   tells you what that event was, call `rename_event_cluster`.
-* Contacts with status 'pending' are invitations the user sent that were never
-  accepted. They are a follow-up list, not connections.
+* Two different facts, never conflate them:
+    - `degree`: '1st' means a first-degree connection. '2nd+' means they are
+      absent from Connections.csv, so they are 2nd degree or further - an
+      invitation is outstanding or lapsed. The export cannot narrow '2nd+'
+      any further, so do not claim 2nd over 3rd.
+    - `followed_up`: whether any message or note exists. Someone can be a
+      first-degree connection the user has never spoken to — that is the
+      normal case for a conference, and the whole point of the follow-up list.
 * Call `get_network_briefing` at the start of a session to learn what the
   background harness ingested since last time.
 """
@@ -226,12 +232,11 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
         return {"error": "no_matching_cluster", "event": event, "known_clusters": known}
 
     rows = st.db.query(
-        f"""
-        SELECT c.id, c.full_name, c.company, c."position", c.profile_url, c.status,
-               c.origin_note, c.origin_direction, c.connected_on, c.invited_at,
-               c.last_interaction_at,
+        """
+        SELECT c.id, c.source, c.full_name, c.company, c."position", c.profile_url,
+               c.status, c.origin_note, c.origin_direction, c.invite_lapsed_at,
+               c.connected_on, c.invited_at, c.last_interaction_at,
                COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) AS met_on,
-               ({RELATIONSHIP_SQL}) AS how,
                EXISTS (SELECT 1 FROM interactions i
                        WHERE i.contact_id = c.id AND i.kind IN ('message','note')) AS followed_up
         FROM contacts c
@@ -242,11 +247,13 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
         """,
         (cluster["id"], max(1, min(limit, 500))),
     )
-    contacts = [dict(r) for r in rows]
+    contacts = describe_rows([dict(r) for r in rows])
     never_accepted = [c["full_name"] for c in contacts if c["status"] in {"pending", "received"}]
     by_category: dict[str, list[str]] = {}
     for contact in contacts:
         by_category.setdefault(contact["how"], []).append(contact["full_name"])
+    first_degree = [c["full_name"] for c in contacts if c["degree"] == "1st"]
+    not_connected = [c["full_name"] for c in contacts if c["degree"] != "1st"]
     return {
         "cluster": {
             "id": int(cluster["id"]),
@@ -263,6 +270,8 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
         "invitation_never_accepted": never_accepted,
         "relationships": relationship_breakdown(contacts),
         "names_by_relationship": by_category,
+        "first_degree_connections": first_degree,
+        "not_connected_yet": not_connected,
     }
 
 
@@ -342,9 +351,9 @@ def get_network_digest(
     total = st.db.scalar(f"SELECT COUNT(*) FROM contacts c WHERE {where_sql}", params) or 0
     rows = st.db.query(
         f"""
-        SELECT c.id, c.full_name, c.company, c."position", c.status, c.origin_note,
+        SELECT c.id, c.source, c.full_name, c.company, c."position", c.status,
+               c.origin_direction, c.invite_lapsed_at, c.origin_note,
                COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) AS met_on,
-               ({RELATIONSHIP_SQL}) AS how,
                (SELECT ec.name FROM event_clusters ec
                 JOIN contact_event_clusters cec ON cec.cluster_id = ec.id
                 WHERE cec.contact_id = c.id ORDER BY ec.start_date LIMIT 1) AS event,
@@ -358,13 +367,17 @@ def get_network_digest(
     )
 
     people = []
-    for row in rows:
+    for row in describe_rows([dict(r) for r in rows]):
         entry: dict[str, Any] = {
             "id": int(row["id"]),
             "name": row["full_name"],
             "role": " @ ".join(p for p in (row["position"], row["company"]) if p) or None,
             "met": row["met_on"],
             "how": row["how"],
+            # '1st' or '2nd+'. Absent from Connections.csv means 2nd degree or
+            # further; the export cannot narrow it beyond that. Distinct from
+            # `followed_up`, which is whether they have ever been spoken to.
+            "degree": row["degree"],
             "followed_up": bool(row["followed_up"]),
         }
         if row["event"]:
