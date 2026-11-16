@@ -70,10 +70,23 @@ def server_params(home: Path) -> StdioServerParameters:
     )
 
 
+def field(obj: Any, *names: str) -> Any:
+    """Read the first attribute that exists.
+
+    The SDK's client models switched from camelCase (1.x) to snake_case (2.x),
+    so a test pinned to one spelling silently stops covering the other SDK.
+    """
+    for name in names:
+        value = getattr(obj, name, None)
+        if value is not None:
+            return value
+    return None
+
+
 def payload(result: Any) -> dict[str, Any]:
     """Pull the JSON body out of an MCP tool result."""
-    if getattr(result, "structuredContent", None):
-        structured = result.structuredContent
+    structured = field(result, "structuredContent", "structured_content")
+    if structured:
         # FastMCP wraps non-model returns in {"result": ...}
         return structured.get("result", structured)
     assert result.content, "tool returned no content"
@@ -84,13 +97,14 @@ async def run_session(home: Path):
     async with stdio_client(server_params(home)) as (read, write):
         async with ClientSession(read, write) as session:
             init = await session.initialize()
-            out: dict[str, Any] = {"server_name": init.serverInfo.name}
+            out: dict[str, Any] = {"server_name": field(init, "serverInfo", "server_info").name}
             out["instructions_present"] = bool(init.instructions)
 
             tools = await session.list_tools()
             out["tools"] = sorted(t.name for t in tools.tools)
             out["schemas_ok"] = all(
-                t.inputSchema and t.inputSchema.get("type") == "object" for t in tools.tools
+                (field(t, "inputSchema", "input_schema") or {}).get("type") == "object"
+                for t in tools.tools
             )
 
             resources = await session.list_resources()

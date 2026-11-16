@@ -21,7 +21,7 @@ classifiers = [
 # Runtime deps are deliberately tiny: the MCP SDK, a file watcher, and the
 # vector extension. Everything else is stdlib (sqlite3, csv, zipfile, urllib).
 dependencies = [
-    "mcp>=1.2.0",
+    "mcp>=1.2,<3",   # 1.x FastMCP and 2.x MCPServer are both supported
     "watchdog>=4.0.0",
     "sqlite-vec>=0.1.6",
 ]

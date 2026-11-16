@@ -21,6 +21,9 @@ Assistant:  7 people, 13-15 Oct. Four are still cold:
 *(Illustrative — the names above come from the synthetic fixtures in
 `tests/fixtures/`, not from anyone's real network.)*
 
+> **Not a developer?** Follow [QUICKSTART.md](QUICKSTART.md) instead — five
+> steps, no config files to edit. `socialmcp setup` connects your AI app for you.
+
 ## Why this exists
 
 Networking at a fast-paced event creates a memory gap: three days later you have
@@ -55,6 +58,16 @@ thing queryable in natural language.
 Requires Python 3.11+.
 
 ```bash
+pip install git+https://github.com/SciTechDude/socialMCP.git
+socialmcp setup      # finds your AI apps and connects them
+socialmcp drop       # opens the folder to put your LinkedIn .zip in
+socialmcp ingest
+socialmcp doctor     # checks everything, explains any problem in plain English
+```
+
+For development work:
+
+```bash
 git clone https://github.com/SciTechDude/socialMCP.git
 cd socialMCP
 pip install -e ".[dev]"
@@ -87,8 +100,16 @@ for the copy to finish, parses it, and files it away under `ingested/linkedin/`.
 
 ## Connect it to any MCP client
 
-SocialMCP is a standard **stdio MCP server** with no client-specific code, so
-anything that speaks MCP can drive it. The whole integration is one command:
+Easiest path — this detects the MCP clients you have installed, writes their
+config (backing up anything it touches), and tells you what to restart:
+
+```bash
+socialmcp setup
+```
+
+To do it by hand: SocialMCP is a standard **stdio MCP server** with no
+client-specific code, so anything that speaks MCP can drive it. The whole
+integration is one command:
 
 ```
 python /absolute/path/to/socialMCP/run.py

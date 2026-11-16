@@ -92,3 +92,30 @@ def test_defaults_are_self_consistent(tmp_path: Path):
     config = Config(home=tmp_path)
     assert config.db_path.parent == tmp_path
     assert config.archive_dir == config.drop_dir.parent / "ingested"
+
+
+def test_explicit_home_owns_the_drop_zone(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Setting only SOCIALMCP_HOME must relocate the drop zone too.
+
+    Regression: the drop zone defaults to a repo-local ./drop-archive when
+    running from a source checkout, resolved from the package's own location.
+    Under an editable install that location is the developer's source tree, so
+    a user who set SOCIALMCP_HOME got their database in one place and their
+    drop zone in another — found by installing into a clean venv.
+    """
+    monkeypatch.setenv("SOCIALMCP_HOME", str(tmp_path / "myhome"))
+
+    config = load_config()
+
+    assert config.db_path == tmp_path / "myhome" / "socialmcp.db"
+    assert config.drop_dir == tmp_path / "myhome" / "drop-archive"
+    assert config.archive_dir == tmp_path / "myhome" / "ingested"
+
+
+def test_source_checkout_still_gets_a_repo_local_drop_zone():
+    """With no configuration at all, a checkout keeps ./drop-archive."""
+    config = Config()
+    assert config.drop_dir.name == "drop-archive"
+    # Either the repo-local one or the one under the default home; never a
+    # path unrelated to both.
+    assert config.drop_dir.parent in {Path(__file__).resolve().parent.parent, config.home}
