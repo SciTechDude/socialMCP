@@ -36,6 +36,10 @@ class SearchFilters:
     event: str | None = None
     connected_after: str | None = None
     connected_before: str | None = None
+    # "Met" window: matches the connection date, or the invitation date for
+    # people who never accepted. This is what an event-shaped question wants.
+    met_after: str | None = None
+    met_before: str | None = None
     has_note: bool | None = None
     source: str | None = None
 
@@ -60,6 +64,12 @@ class SearchFilters:
         if self.connected_before:
             clauses.append("c.connected_on <= ?")
             params.append(self.connected_before[:10])
+        if self.met_after:
+            clauses.append("COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) >= ?")
+            params.append(self.met_after[:10])
+        if self.met_before:
+            clauses.append("COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) <= ?")
+            params.append(self.met_before[:10])
         if self.has_note is True:
             clauses.append("(c.origin_note IS NOT NULL OR c.search_blob != '')")
         if self.has_note is False:
@@ -86,16 +96,83 @@ class SearchResult:
             "mode_used": self.mode_used,
             "total_matching_filters": self.total_matching_filters,
             "returned": len(self.contacts),
+            "relationships": relationship_breakdown(self.contacts),
             "contacts": self.contacts,
             "notes": self.notes,
         }
 
 
+# Who approached whom, and what came of it. Derived in SQL so every tool
+# reports the same five categories rather than each caller re-inferring them
+# from (status, origin_direction) — a distinction a model should never have to
+# reconstruct, and would eventually get wrong.
+#
+# 'unknown_invite' is honest, not a gap: LinkedIn's Invitations.csv only covers
+# a recent window, so for older connections the archive simply does not say who
+# sent the request.
+RELATIONSHIP_SQL = """
+    CASE
+      WHEN c.status = 'connected' AND c.origin_direction = 'outbound'
+                                     THEN 'i_invited_they_accepted'
+      WHEN c.status = 'connected' AND c.origin_direction = 'inbound'
+                                     THEN 'they_invited_i_accepted'
+      WHEN c.status = 'connected'    THEN 'connected_unknown_invite'
+      WHEN c.status = 'pending'  AND c.invite_lapsed_at IS NOT NULL
+                                     THEN 'i_invited_it_lapsed'
+      WHEN c.status = 'received' AND c.invite_lapsed_at IS NOT NULL
+                                     THEN 'they_invited_it_lapsed'
+      WHEN c.status = 'pending'      THEN 'i_invited_not_yet_accepted'
+      WHEN c.status = 'received'     THEN 'they_invited_i_have_not_accepted_yet'
+      WHEN c.status = 'withdrawn'    THEN 'i_invited_then_withdrew'
+      ELSE 'unknown'
+    END
+"""
+
+RELATIONSHIP_MEANING = {
+    "i_invited_they_accepted": "you sent the invitation and they accepted",
+    "they_invited_i_accepted": "they sent the invitation and you accepted",
+    "i_invited_not_yet_accepted": "your invitation is still unanswered",
+    "they_invited_i_have_not_accepted_yet": (
+        "their invitation is still sitting unanswered by you"
+    ),
+    "i_invited_it_lapsed": (
+        "your invitation disappeared from a later export without connecting - "
+        "declined, withdrawn or expired; LinkedIn's export does not say which"
+    ),
+    "they_invited_it_lapsed": (
+        "their invitation disappeared from a later export without connecting - "
+        "you declined or ignored it, or it expired"
+    ),
+    "i_invited_then_withdrew": "you withdrew the invitation",
+    "connected_unknown_invite": (
+        "connected, but the export's invitation history (a rolling ~6-month "
+        "window) does not reach back far enough to say who invited whom"
+    ),
+    "unknown": "no invitation or connection record",
+}
+
+
+def relationship_breakdown(people: list[dict[str, Any]], key: str = "how") -> dict[str, Any]:
+    """Counts per category, plus a legend for only the categories present."""
+    counts: dict[str, int] = {}
+    for person in people:
+        label = person.get(key)
+        if label:
+            counts[label] = counts.get(label, 0) + 1
+    ordered = dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+    return {
+        "counts": ordered,
+        "legend": {k: RELATIONSHIP_MEANING[k] for k in ordered if k in RELATIONSHIP_MEANING},
+    }
+
+
 CONTACT_COLUMNS = """
     c.id, c.source, c.full_name, c.company, c."position", c.headline, c.location,
     c.email, c.profile_url, c.status, c.origin_note, c.origin_direction,
-    c.invited_at, c.connected_on, c.last_interaction_at
-"""
+    c.invited_at, c.connected_on, c.last_interaction_at,
+    COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) AS met_on,
+    () AS how
+""".replace("()", RELATIONSHIP_SQL)
 
 
 def search_network(
@@ -121,7 +198,7 @@ def search_network(
         # Pure structured browse: newest connections first.
         rows = db.query(
             f"""SELECT {CONTACT_COLUMNS} FROM contacts c WHERE {where_sql}
-                ORDER BY COALESCE(c.connected_on, c.invited_at) DESC, c.full_name
+                ORDER BY COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) DESC, c.full_name
                 LIMIT ?""",
             [*where_params, limit],
         )

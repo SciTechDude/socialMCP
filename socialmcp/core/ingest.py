@@ -250,13 +250,22 @@ def _ingest_directory(
         if new_key in key_to_id:
             key_to_id[old_key] = key_to_id[new_key]
 
+    invited_in_this_archive: set[int] = set()
     for interaction in interaction_records:
         contact_id = _resolve_interaction_contact(db, interaction, key_to_id, aliases)
         if contact_id is None:
             continue
+        if interaction.kind == "invitation":
+            # Collected whether or not the row is new, because an unchanged
+            # invitation still proves it is *still pending* in this export.
+            invited_in_this_archive.add(contact_id)
         if _insert_interaction(db, interaction, contact_id, archive_id, now):
             stats.interactions_new += 1
             touched.add(contact_id)
+
+    stats.invites_lapsed = _sweep_lapsed_invitations(
+        db, adapter.source, ctx, invited_in_this_archive, now
+    )
 
     for contact_id in touched:
         _refresh_derived(db, contact_id, now)
@@ -730,6 +739,62 @@ def _insert_interaction(
         ),
     )
     return cursor.rowcount > 0
+
+
+def _sweep_lapsed_invitations(
+    db: Database,
+    source: str,
+    ctx: ArchiveContext,
+    invited_now: set[int],
+    now: str,
+) -> int:
+    """Mark invitations that disappeared from the export without connecting.
+
+    An invitation that was pending in an earlier archive and is absent from
+    this one, while the person still is not a connection, has been declined,
+    withdrawn, ignored or expired. The export does not distinguish those, so
+    neither do we.
+
+    Guarded two ways, because a false positive here would quietly delete
+    someone from the follow-up list:
+      * only runs when this archive actually contained an Invitations.csv
+      * only applies to invitations dated inside the window this archive
+        covers. Outside that window the file says nothing, and absence is not
+        evidence.
+    """
+    if not ctx.options.get("invitations_present"):
+        return 0
+    window_start = ctx.options.get("invitation_window_start")
+    if not window_start:
+        return 0
+
+    # A re-sent invitation clears any previous lapse.
+    if invited_now:
+        placeholders = ",".join("?" * len(invited_now))
+        db.execute(
+            f"UPDATE contacts SET invite_lapsed_at = NULL WHERE invite_lapsed_at IS NOT NULL "
+            f"AND id IN ({placeholders})",
+            list(invited_now),
+        )
+
+    sql = """
+        UPDATE contacts SET invite_lapsed_at = ?, updated_at = ?
+        WHERE source = ?
+          AND status IN ('pending', 'received')
+          AND invite_lapsed_at IS NULL
+          AND invited_at IS NOT NULL
+          AND invited_at >= ?
+    """
+    params: list[Any] = [now, now, source, window_start]
+    if invited_now:
+        sql += f" AND id NOT IN ({','.join('?' * len(invited_now))})"
+        params += list(invited_now)
+
+    cursor = db.execute(sql, params)
+    count = cursor.rowcount or 0
+    if count:
+        log.info("%d invitation(s) lapsed (gone from the export, never connected)", count)
+    return count
 
 
 def _refresh_derived(db: Database, contact_id: int, now: str) -> None:

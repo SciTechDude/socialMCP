@@ -42,9 +42,11 @@ from ..core.db import Database, open_database
 from ..core.harness import Harness
 from ..core.ingest import IngestError, add_note, ingest_path, refresh_embeddings
 from ..core.search import (
+    RELATIONSHIP_SQL,
     AmbiguousContactError,
     SearchFilters,
     get_contact_detail,
+    relationship_breakdown,
     resolve_contact,
 )
 from ..core.search import (
@@ -128,6 +130,8 @@ def search_network(
     event: str | None = None,
     connected_after: str | None = None,
     connected_before: str | None = None,
+    met_after: str | None = None,
+    met_before: str | None = None,
     has_note: bool | None = None,
     mode: str = "hybrid",
     limit: int = 25,
@@ -142,8 +146,16 @@ def search_network(
         title_contains: Substring match on job title or headline.
         status: 'connected' | 'pending' | 'received' | 'withdrawn'.
         event: Event cluster name or slug, e.g. 'seattle-ai-week'.
-        connected_after: 'YYYY-MM-DD' inclusive lower bound.
-        connected_before: 'YYYY-MM-DD' inclusive upper bound.
+        connected_after: 'YYYY-MM-DD' inclusive lower bound on the date the
+            connection was accepted.
+        connected_before: 'YYYY-MM-DD' inclusive upper bound on the same.
+        met_after: 'YYYY-MM-DD' lower bound on when they were MET — the
+            connection date, or the invitation date for people who never
+            accepted. Prefer this over connected_after for event-shaped
+            questions ("who did I meet at the conference in late October"),
+            because it includes the invitations that went unanswered, who are
+            usually the people most worth following up with.
+        met_before: 'YYYY-MM-DD' upper bound on the same.
         has_note: True to return only contacts that have an origin note or logged notes.
         mode: 'hybrid' (default), 'keyword', or 'semantic'.
         limit: Max contacts to return (1-200).
@@ -156,6 +168,8 @@ def search_network(
         event=event,
         connected_after=connected_after,
         connected_before=connected_before,
+        met_after=met_after,
+        met_before=met_before,
         has_note=has_note,
     )
     result = run_search(st.db, st.config, query=query, filters=filters, limit=limit, mode=mode)
@@ -189,7 +203,10 @@ def get_contact(contact: str, interaction_limit: int = 25) -> dict[str, Any]:
 
 @mcp.tool()
 def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
-    """Pull up everyone connected during one event window, with their invite notes.
+    """Pull up everyone met during one event window, with their invite notes.
+
+    Includes people whose invitation was never accepted — they were met at the
+    event too, and are listed in `invitation_never_accepted`.
 
     Args:
         event: Cluster name, slug, numeric id, or any date inside the window
@@ -209,21 +226,27 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
         return {"error": "no_matching_cluster", "event": event, "known_clusters": known}
 
     rows = st.db.query(
-        """
+        f"""
         SELECT c.id, c.full_name, c.company, c."position", c.profile_url, c.status,
                c.origin_note, c.origin_direction, c.connected_on, c.invited_at,
                c.last_interaction_at,
+               COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) AS met_on,
+               ({RELATIONSHIP_SQL}) AS how,
                EXISTS (SELECT 1 FROM interactions i
                        WHERE i.contact_id = c.id AND i.kind IN ('message','note')) AS followed_up
         FROM contacts c
         JOIN contact_event_clusters cec ON cec.contact_id = c.id
         WHERE cec.cluster_id = ?
-        ORDER BY c.connected_on, c.full_name
+        ORDER BY met_on, c.full_name
         LIMIT ?
         """,
         (cluster["id"], max(1, min(limit, 500))),
     )
     contacts = [dict(r) for r in rows]
+    never_accepted = [c["full_name"] for c in contacts if c["status"] in {"pending", "received"}]
+    by_category: dict[str, list[str]] = {}
+    for contact in contacts:
+        by_category.setdefault(contact["how"], []).append(contact["full_name"])
     return {
         "cluster": {
             "id": int(cluster["id"]),
@@ -237,6 +260,9 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
         "returned": len(contacts),
         "contacts": contacts,
         "not_followed_up": [c["full_name"] for c in contacts if not c["followed_up"]],
+        "invitation_never_accepted": never_accepted,
+        "relationships": relationship_breakdown(contacts),
+        "names_by_relationship": by_category,
     }
 
 
@@ -272,6 +298,88 @@ def list_pending_invitations(min_days_waiting: int = 0, limit: int = 50) -> dict
         (max(0, min_days_waiting), max(1, min(limit, 500))),
     )
     return {"count": len(rows), "pending": [dict(r) for r in rows]}
+
+
+@mcp.tool()
+def get_network_digest(
+    company: str | None = None,
+    event: str | None = None,
+    status: str | None = None,
+    met_after: str | None = None,
+    met_before: str | None = None,
+    include_notes: bool = True,
+    limit: int = 400,
+) -> dict[str, Any]:
+    """Get a compact one-line-per-person slate to reason over yourself.
+
+    Use this instead of `search_network` when ranking needs YOUR judgement
+    rather than a similarity score: open-ended questions ("who should I
+    reconnect with before the holidays"), multi-criteria trade-offs, or
+    grouping and summarizing a whole segment. `search_network` returns its best
+    guesses; this returns the field so you can decide.
+
+    Roughly 20 tokens per person, so a few hundred people cost a few thousand
+    tokens. Narrow with filters when you can — and prefer `search_network` for
+    a specific lookup, since it is ~20x cheaper.
+
+    Args:
+        company: Substring match on company.
+        event: Event cluster name or slug.
+        status: 'connected' | 'pending' | 'received'.
+        met_after: 'YYYY-MM-DD' lower bound on when they were met.
+        met_before: 'YYYY-MM-DD' upper bound on when they were met.
+        include_notes: Include the connection-invite note (how you met). Costs
+            tokens but is usually the most useful column.
+        limit: Max people (1-2000).
+    """
+    st = state()
+    filters = SearchFilters(
+        company=company, event=event, status=status, met_after=met_after, met_before=met_before
+    )
+    where_sql, params = filters.where()
+    limit = max(1, min(limit, 2000))
+
+    total = st.db.scalar(f"SELECT COUNT(*) FROM contacts c WHERE {where_sql}", params) or 0
+    rows = st.db.query(
+        f"""
+        SELECT c.id, c.full_name, c.company, c."position", c.status, c.origin_note,
+               COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) AS met_on,
+               ({RELATIONSHIP_SQL}) AS how,
+               (SELECT ec.name FROM event_clusters ec
+                JOIN contact_event_clusters cec ON cec.cluster_id = ec.id
+                WHERE cec.contact_id = c.id ORDER BY ec.start_date LIMIT 1) AS event,
+               EXISTS (SELECT 1 FROM interactions i
+                       WHERE i.contact_id = c.id AND i.kind IN ('message','note')) AS followed_up
+        FROM contacts c WHERE {where_sql}
+        ORDER BY met_on DESC, c.full_name
+        LIMIT ?
+        """,
+        [*params, limit],
+    )
+
+    people = []
+    for row in rows:
+        entry: dict[str, Any] = {
+            "id": int(row["id"]),
+            "name": row["full_name"],
+            "role": " @ ".join(p for p in (row["position"], row["company"]) if p) or None,
+            "met": row["met_on"],
+            "how": row["how"],
+            "followed_up": bool(row["followed_up"]),
+        }
+        if row["event"]:
+            entry["event"] = row["event"]
+        if include_notes and row["origin_note"]:
+            entry["how_we_met"] = row["origin_note"][:200]
+        people.append({k: v for k, v in entry.items() if v is not None})
+
+    return {
+        "total_matching": total,
+        "returned": len(people),
+        "truncated": total > len(people),
+        "relationships": relationship_breakdown(people),
+        "people": people,
+    }
 
 
 @mcp.tool()

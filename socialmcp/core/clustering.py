@@ -97,12 +97,20 @@ def rebuild_event_clusters(
 ) -> ClusterStats:
     """Recompute clusters from scratch and reconcile them with stored rows."""
     params: list[object] = []
-    sql = "SELECT id, connected_on FROM contacts WHERE connected_on IS NOT NULL"
+    # The "met date" is the connection date when there is one, else the date the
+    # invitation was sent. Someone you met at a conference who never accepted
+    # your invite still belongs to that event — they are the most important
+    # person in it, because they are the unfinished follow-up.
+    sql = """
+        SELECT id, COALESCE(connected_on, substr(invited_at, 1, 10)) AS met_on
+        FROM contacts
+        WHERE COALESCE(connected_on, substr(invited_at, 1, 10)) IS NOT NULL
+    """
     if source:
         sql += " AND source = ?"
         params.append(source)
 
-    rows = [(int(r["id"]), r["connected_on"]) for r in db.query(sql, params)]
+    rows = [(int(r["id"]), r["met_on"]) for r in db.query(sql, params)]
     bursts = find_bursts(rows, config)
     stats = ClusterStats()
     now = utcnow_iso()

@@ -45,6 +45,15 @@ Basic_LinkedInDataExport*.zip
 socialmcp.toml
 !socialmcp.example.toml
 
+# Private planning documents — business strategy, monetization, roadmap.
+# Kept on disk for your own reference, never published.
+ROADMAP.md
+NOTES.md
+PLANNING.md
+PRIVATE.md
+/private/
+/notes/
+
 # ---------------------------------------------------------------------------
 # Python
 # ---------------------------------------------------------------------------

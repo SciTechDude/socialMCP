@@ -47,7 +47,7 @@ def test_briefing_reports_unacknowledged_work(db, config, linkedin_dir: Path):
     assert briefing["while_you_were_away"]
     assert briefing["stats"]["contacts"] == 12
     assert briefing["pending_invitations"][0]["full_name"] == "Rafael Santos"
-    assert briefing["recent_event_clusters"][0]["contact_count"] == 7
+    assert briefing["recent_event_clusters"][0]["contact_count"] == 9
     # Nobody has been messaged or noted except via fixtures, so follow-ups show up.
     assert briefing["recent_contacts_never_followed_up"]
 

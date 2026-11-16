@@ -20,7 +20,7 @@ from ..config import Config
 
 log = logging.getLogger("socialmcp.db")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _SCHEMA_SQL = Path(__file__).with_name("schema.sql")
 _SCHEMA_VEC_SQL = Path(__file__).with_name("schema_vec.sql")
 
@@ -77,9 +77,11 @@ class Database:
     def migrate(self) -> None:
         """Apply the schema. Idempotent — safe on every startup."""
         self.conn.executescript(_SCHEMA_SQL.read_text())
+        self._add_missing_columns()
+        self._rebuild_views()
 
         current = self.get_meta("schema_version")
-        if current is None:
+        if current is None or int(current) < SCHEMA_VERSION:
             self.set_meta("schema_version", str(SCHEMA_VERSION))
         elif int(current) > SCHEMA_VERSION:
             raise RuntimeError(
@@ -90,6 +92,30 @@ class Database:
         if self.vec_enabled:
             self._migrate_vec()
         self.conn.commit()
+
+    # Column additions are applied with ALTER TABLE rather than by rebuilding
+    # the table, so an existing database upgrades in place without touching the
+    # user's data. (A CHECK-constraint change would require a rebuild, which is
+    # why lapsed invitations are recorded in their own column instead of as a
+    # new `status` value.)
+    ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+        ("contacts", "invite_lapsed_at", "TEXT"),
+    )
+
+    def _add_missing_columns(self) -> None:
+        for table, column, decl in self.ADDED_COLUMNS:
+            existing = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                log.info("adding column %s.%s", table, column)
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+    def _rebuild_views(self) -> None:
+        """CREATE VIEW IF NOT EXISTS never updates a changed definition."""
+        for name in ("v_pending_invitations", "v_contact_clusters"):
+            self.conn.execute(f"DROP VIEW IF EXISTS {name}")
+        self.conn.executescript(
+            _SCHEMA_SQL.read_text().split("-- Convenience views")[-1]
+        )
 
     def _migrate_vec(self) -> None:
         stored_dim = self.get_meta("embedding_dim")

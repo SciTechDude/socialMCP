@@ -76,8 +76,11 @@ def test_event_cluster_detected_from_burst(db: Database, config: Config, linkedi
     assert len(clusters) == 1
     cluster = clusters[0]
     assert cluster["start_date"] == "2025-10-13"
-    assert cluster["end_date"] == "2025-10-15"
-    assert cluster["contact_count"] == 7
+    # Runs to the 16th and holds 9 people because membership is by the date you
+    # MET someone: Rafael's invite (15th) was never accepted, and Yuki invited
+    # you back on the 16th. Both were at the event; only acceptance lagged.
+    assert cluster["end_date"] == "2025-10-16"
+    assert cluster["contact_count"] == 9
     assert cluster["auto_generated"] == 1
     # Scattered connections (March, June) are not events.
     members = db.query(
@@ -151,7 +154,7 @@ def test_search_filters_and_event_scope(db: Database, config: Config, linkedin_d
     slug = db.scalar("SELECT slug FROM event_clusters LIMIT 1")
 
     scoped = search_network(db, config, filters=SearchFilters(event=slug), limit=50)
-    assert len(scoped.contacts) == 7
+    assert len(scoped.contacts) == 9
 
     sales = search_network(db, config, query="enterprise AI sales", mode="keyword", limit=5)
     assert "Dana Olufemi" in [c["full_name"] for c in sales.contacts]
@@ -223,3 +226,144 @@ def test_identical_redrop_reports_unchanged_not_updated(
     assert second.history_changes == 0
     assert db.scalar("SELECT COUNT(*) FROM contacts") == 12
     assert db.scalar("SELECT COUNT(*) FROM archives") == 2
+
+
+def test_met_window_includes_invitations_that_were_never_accepted(
+    db: Database, config: Config, linkedin_dir: Path
+):
+    """"Who did I meet at the conference" must not silently drop non-acceptances.
+
+    A date filter on connected_on cannot see someone you invited at an event who
+    never accepted — and that person is the whole point of a follow-up list. The
+    met_* window matches the connection date, or the invitation date when there
+    is no connection.
+    """
+    ingest_path(db, config, linkedin_dir)
+
+    connected_only = search_network(
+        db,
+        config,
+        filters=SearchFilters(connected_after="2025-10-13", connected_before="2025-10-16"),
+        limit=50,
+    )
+    met = search_network(
+        db, config, filters=SearchFilters(met_after="2025-10-13", met_before="2025-10-16"), limit=50
+    )
+
+    connected_names = {c["full_name"] for c in connected_only.contacts}
+    met_names = {c["full_name"] for c in met.contacts}
+
+    assert "Rafael Santos" not in connected_names    # invited, never accepted
+    assert "Rafael Santos" in met_names
+    assert met_names > connected_names
+    assert met.contacts, "met window must return the event's people"
+
+
+def test_event_cluster_contains_the_unaccepted_invite(
+    db: Database, config: Config, linkedin_dir: Path
+):
+    ingest_path(db, config, linkedin_dir)
+    members = db.query(
+        """
+        SELECT c.full_name, c.status FROM contacts c
+        JOIN contact_event_clusters cec ON cec.contact_id = c.id
+        """
+    )
+    by_name = {m["full_name"]: m["status"] for m in members}
+    assert by_name.get("Rafael Santos") == "pending"
+    assert by_name.get("Yuki Tanaka") == "received"
+    # People connected months apart are still not part of any event.
+    assert "Luis Ferreira" not in by_name
+
+
+def _write_invitations(path: Path, rows: list[str]) -> None:
+    header = "From,To,Sent At,Message,Direction\n"
+    path.write_text(header + "".join(rows), encoding="utf-8")
+
+
+def test_invitation_that_vanishes_without_connecting_is_marked_lapsed(
+    db: Database, config: Config, linkedin_dir: Path, tmp_path: Path
+):
+    """Declined/withdrawn invitations are inferred, because LinkedIn omits them.
+
+    A declined invitation does not appear in any export — the row simply
+    disappears from Invitations.csv. So the signal is: it was pending in an
+    earlier archive, it is gone from this archive's invitations list, and the
+    person still is not in Connections.csv.
+    """
+    ingest_path(db, config, linkedin_dir)
+    assert db.scalar("SELECT status FROM contacts WHERE full_name='Rafael Santos'") == "pending"
+    assert "Rafael Santos" in [r["full_name"] for r in db.query("SELECT * FROM v_pending_invitations")]
+
+    # Next month's archive: Rafael's invitation is gone, Yuki's is still there,
+    # and neither appears in Connections.csv.
+    later = tmp_path / "month2"
+    shutil.copytree(linkedin_dir, later)
+    _write_invitations(
+        later / "Invitations.csv",
+        [
+            'Avery Chen,Priya Raghavan,"10/13/25, 6:42 PM","Great meeting you at Seattle AI Week today!",OUTGOING\n',
+            'Yuki Tanaka,Avery Chen,"10/16/25, 8:15 AM","Enjoyed your question at the keynote.",INCOMING\n',
+        ],
+    )
+
+    stats = ingest_path(db, config, later)
+
+    assert stats.invites_lapsed == 1
+    rafael = db.query_one("SELECT * FROM contacts WHERE full_name='Rafael Santos'")
+    assert rafael["invite_lapsed_at"] is not None
+    assert rafael["status"] == "pending"          # the raw fact is preserved
+    assert rafael["origin_note"]                  # and so is how they were met
+    # He drops off the follow-up list, because there is nothing left to wait for.
+    assert "Rafael Santos" not in [
+        r["full_name"] for r in db.query("SELECT * FROM v_pending_invitations")
+    ]
+    # Yuki's invitation is still live and must not be touched.
+    assert db.scalar("SELECT invite_lapsed_at FROM contacts WHERE full_name='Yuki Tanaka'") is None
+
+
+def test_invitations_outside_the_export_window_are_never_marked_lapsed(
+    db: Database, config: Config, linkedin_dir: Path, tmp_path: Path
+):
+    """Absence only means something inside the window the export covers.
+
+    LinkedIn's Invitations.csv is a rolling window (~6 months in observed
+    archives). An older invitation naturally ages out of the file, and reading
+    that as a rejection would silently delete real follow-ups.
+    """
+    ingest_path(db, config, linkedin_dir)
+
+    later = tmp_path / "month2"
+    shutil.copytree(linkedin_dir, later)
+    # This archive's invitations all post-date the fixture's, so every earlier
+    # invitation is outside its window.
+    _write_invitations(
+        later / "Invitations.csv",
+        ['Avery Chen,Nora Blake,"03/02/26, 9:00 AM","Good to meet you.",OUTGOING\n'],
+    )
+
+    stats = ingest_path(db, config, later)
+
+    assert stats.invites_lapsed == 0
+    assert db.scalar("SELECT invite_lapsed_at FROM contacts WHERE full_name='Rafael Santos'") is None
+
+
+def test_a_resent_invitation_clears_a_previous_lapse(
+    db: Database, config: Config, linkedin_dir: Path, tmp_path: Path
+):
+    ingest_path(db, config, linkedin_dir)
+    later = tmp_path / "month2"
+    shutil.copytree(linkedin_dir, later)
+    _write_invitations(
+        later / "Invitations.csv",
+        ['Avery Chen,Priya Raghavan,"10/13/25, 6:42 PM","note",OUTGOING\n'],
+    )
+    ingest_path(db, config, later)
+    assert db.scalar("SELECT invite_lapsed_at FROM contacts WHERE full_name='Rafael Santos'")
+
+    # Third archive: the invitation is back, so the lapse was wrong (or they
+    # were re-invited). Either way the flag must clear.
+    third = tmp_path / "month3"
+    shutil.copytree(linkedin_dir, third)
+    ingest_path(db, config, third)
+    assert db.scalar("SELECT invite_lapsed_at FROM contacts WHERE full_name='Rafael Santos'") is None
