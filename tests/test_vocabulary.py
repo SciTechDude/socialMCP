@@ -249,3 +249,28 @@ def test_capabilities_document_matches_the_code():
     document = Path(__file__).resolve().parent.parent / "CAPABILITIES.md"
     assert document.is_file(), "run: socialmcp can-do > CAPABILITIES.md"
     assert document.read_text(encoding="utf-8") == capabilities.as_markdown()
+
+
+def test_readme_capability_block_matches_the_code():
+    """The README block is generated too, so it cannot promise stale behaviour."""
+    from socialmcp import capabilities
+
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
+    block = capabilities.as_readme_section()
+    assert block in readme, "README capability block is stale; regenerate it"
+
+
+def test_generated_docs_keep_placeholders_visible():
+    """`<person>` is an unknown HTML tag to GitHub and vanishes unless quoted.
+
+    Guards a bug caught in review: placeholders rendered as italics disappeared
+    entirely on github.com, leaving example questions with holes in them.
+    """
+    from socialmcp import capabilities
+
+    for text in (capabilities.as_markdown(), capabilities.as_readme_section()):
+        for line in text.splitlines():
+            if "<" not in line or line.startswith("<!--"):
+                continue
+            # Any line showing a placeholder must wrap it in backticks.
+            assert "`" in line, f"unquoted placeholder would be stripped: {line!r}"
