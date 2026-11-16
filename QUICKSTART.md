@@ -38,44 +38,35 @@ up to 24 hours. Carry on with Step 2 while you wait.
 
 ## Step 2 — Install SocialMCP
 
-You need **Python 3.11 or newer**. To check, open a terminal and type:
+**On a Mac, this is one download.**
 
-- **Mac:** press `Cmd+Space`, type `Terminal`, press Enter. Then type `python3 --version`
-- **Windows:** press `Start`, type `PowerShell`, press Enter. Then type `python --version`
+1. [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases/latest)
+   (pick the file matching your Mac — *Apple Silicon* for M1/M2/M3/M4,
+   *Intel* otherwise; if unsure, click the Apple menu → About This Mac).
+2. Open the downloaded file and drag **SocialMCP** into your Applications folder.
+3. Double-click it.
 
-If it says 3.11 or higher, you're set. If not, or if it says "command not
-found", install Python from [python.org/downloads](https://www.python.org/downloads/)
-(click the big yellow button, run the installer, and **tick "Add Python to
-PATH"** if Windows offers it).
-
-Then install SocialMCP by copying this line into the same terminal window and
-pressing Enter:
-
-```
-pip install socialmcp
-```
-
-On Mac, if that complains about permissions, use `pip3 install --user socialmcp`.
+That is the whole install. There is no Python to set up and no terminal to
+open — everything it needs is inside the app.
 
 <details>
-<summary>Not published to PyPI yet? Install from GitHub instead</summary>
+<summary>Windows, Linux, or if you would rather use the command line</summary>
+
+You need **Python 3.11 or newer** (check with `python3 --version`; if it is
+missing or older, install it from [python.org/downloads](https://www.python.org/downloads/)
+and tick "Add Python to PATH" if Windows offers it). Then:
 
 ```
 pip install git+https://github.com/SciTechDude/socialMCP.git
 ```
-</details>
 
----
+On a Mac, if that complains about permissions, use `pip3 install --user ...`.
+</details>
 
 ## Step 3 — Connect it to your AI app
 
-Type this one command:
-
-```
-socialmcp setup
-```
-
-It finds the AI apps already on your computer — Claude Desktop, Claude Code,
+The app does this for you when you first open it. It finds the AI apps already
+on your computer — Claude Desktop, Claude Code,
 Cursor, Windsurf, VS Code, Zed — and connects them for you. You don't have to
 edit any settings files. It makes a backup of anything it changes.
 
@@ -90,8 +81,10 @@ Connecting SocialMCP to the AI apps on this computer...
          Restart Cursor, then check Settings -> MCP.
 ```
 
+If you installed from the command line instead, run `socialmcp setup`.
+
 **Don't have an AI app yet?** Install [Claude Desktop](https://claude.ai/download)
-(free), then run `socialmcp setup` again.
+(free), then open SocialMCP again.
 
 ---
 
@@ -99,13 +92,8 @@ Connecting SocialMCP to the AI apps on this computer...
 
 When LinkedIn's email arrives, download the `.zip` file. **Don't unzip it.**
 
-Then type:
-
-```
-socialmcp drop
-```
-
-This opens the folder where the file goes. Drag the `.zip` into it. Then type:
+SocialMCP opens the right folder for you when you first run it. (From the
+command line: `socialmcp drop`.) Drag the `.zip` into it. Then type:
 
 ```
 socialmcp ingest

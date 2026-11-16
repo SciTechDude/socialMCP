@@ -24,6 +24,26 @@ Assistant:  7 people, 13-15 Oct. Four are still cold:
 > **Not a developer?** Follow [QUICKSTART.md](QUICKSTART.md) instead — five
 > steps, no config files to edit. `socialmcp setup` connects your AI app for you.
 
+## Get it
+
+**Mac, no setup** — [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases/latest)
+→ drag to Applications → double-click. It finds your AI app, connects itself,
+and opens the folder to drop your LinkedIn export into. No Python, no terminal.
+
+Then: [**5-minute quick start**](QUICKSTART.md) · [What it can do](#what-you-can-do-with-it)
+
+**Developers** —
+
+```bash
+pip install git+https://github.com/SciTechDude/socialMCP.git
+socialmcp setup        # connects the MCP clients you have installed
+socialmcp drop         # opens the folder for your export
+socialmcp ingest
+```
+
+Requires Python 3.11+. Linux and Windows are supported this way; the Mac app is
+a convenience, not a different product.
+
 ## Why this exists
 
 Networking at a fast-paced event creates a memory gap: three days later you have
@@ -84,35 +104,24 @@ Each of these has caveats worth knowing — see [CAPABILITIES.md](CAPABILITIES.m
 | **Local-first privacy** | Contacts and DM history live in one SQLite file on your machine. Embeddings default to local Ollama. Cloud LLM keys are strictly opt-in. |
 | **Contributor-extensible** | New sources are one module implementing `BaseAdapter`. No schema changes. |
 
-## Install
-
-Requires Python 3.11+.
-
-```bash
-pip install git+https://github.com/SciTechDude/socialMCP.git
-socialmcp setup      # finds your AI apps and connects them
-socialmcp drop       # opens the folder to put your LinkedIn .zip in
-socialmcp ingest
-socialmcp doctor     # checks everything, explains any problem in plain English
-```
-
-For development work:
+## Install from source
 
 ```bash
 git clone https://github.com/SciTechDude/socialMCP.git
 cd socialMCP
 pip install -e ".[dev]"
+pytest
 ```
 
-Optional, for semantic search (recommended):
+Optional, for meaning-based search (recommended, and entirely local):
 
 ```bash
-# sqlite-vec comes with the install; you also need a local embedding model
-ollama pull nomic-embed-text
+ollama pull nomic-embed-text    # install Ollama from ollama.com first
+socialmcp reindex
 ```
 
-Without Ollama, SocialMCP runs fine — search falls back to SQLite FTS5 keyword
-matching plus exact filters.
+Without it, search falls back to SQLite FTS5 keyword matching and everything
+else works unchanged.
 
 ## Get your data
 
@@ -351,15 +360,11 @@ ruff check .
 Fixtures in `tests/fixtures/linkedin/` are a hand-written, fully synthetic
 export that reproduces every quirk above. Use them instead of your real data.
 
-## Roadmap
+## Contributing
 
-- **Phase 1 & 2 (done):** schema, hardened ingest pipeline, LinkedIn adapter,
-  event clustering, harness, MCP tools and resources.
-- **Phase 3:** more adapters (Instagram/Facebook JSON, X archives, vCard/CSV),
-  richer follow-up prompting, optional recurring reminders.
-
-Adapters are the easiest place to contribute — one module, no schema change.
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Adapters for other platforms are the easiest place to start: one module under
+`socialmcp/adapters/<source>/`, no schema change, nothing shared to edit. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
