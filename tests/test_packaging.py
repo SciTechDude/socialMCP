@@ -80,7 +80,12 @@ def test_build_script_verifies_the_bundle_is_self_contained():
     """The build must fail loudly if the bundle needs the dev environment."""
     script = (MACOS / "build.sh").read_text(encoding="utf-8")
     assert "env -i" in script, "build.sh must test the bundle with a stripped environment"
-    assert "rm -rf build dist" in script, "a stale PyInstaller analysis gets silently reused"
+    # A stale analysis is silently reused, so the output directory for the
+    # architecture being built has to be cleared first.
+    assert 'rm -rf "build/$TARGET_ARCH" "dist/$TARGET_ARCH"' in script
+    # And the produced binary must be checked against what was asked for; a
+    # mislabelled dmg is worse than a missing one.
+    assert "lipo -archs" in script
     assert "--sign" in script
 
 
