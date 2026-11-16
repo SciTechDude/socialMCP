@@ -27,7 +27,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from ..adapters import ArchiveContext, detect_adapter, get_adapter
+from ..adapters import ArchiveContext, available_adapters, detect_adapter, get_adapter
 from ..config import Config
 from .clustering import rebuild_event_clusters
 from .db import Database, json_dumps
@@ -197,9 +197,12 @@ def _ingest_directory(
     if adapter is None:
         adapter = detect_adapter(root)
     if adapter is None:
+        # The list of sources is read from the registry, not hardcoded, so a
+        # contributor's new adapter appears in this message for free.
+        known = ", ".join(sorted(available_adapters())) or "none installed"
         raise IngestError(
             f"no adapter recognized {archive_file.name if archive_file else root.name}. "
-            "Supported today: LinkedIn data archives. See CONTRIBUTING.md to add one."
+            f"Installed sources: {known}. See CONTRIBUTING.md to add one."
         )
 
     archive_name = archive_file.name if archive_file else root.name

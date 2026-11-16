@@ -156,3 +156,26 @@ def test_event_cluster_groups_people_by_who_approached_whom(server_state):
     # The legend only explains categories that are actually present.
     assert set(detail["relationships"]["legend"]) == set(counts)
     assert "unknown" not in counts or counts["unknown"] == 0
+
+
+def test_degree_distinguishes_connected_from_merely_met(server_state):
+    """Connection degree and follow-up state are different facts.
+
+    Conflating them is how a reader concludes they are not connected to someone
+    they are in fact connected to but have simply never messaged.
+    """
+    digest = {p["name"]: p for p in srv.get_network_digest()["people"]}
+
+    # In Connections.csv -> 1st, whether or not they have ever been spoken to.
+    assert digest["Priya Raghavan"]["degree"] == "1st"
+    assert digest["Marcus Webb"]["degree"] == "1st"
+    assert digest["Marcus Webb"]["followed_up"] is False      # 1st but never contacted
+
+    # Absent from Connections.csv -> 2nd or further; the export cannot say which.
+    assert digest["Rafael Santos"]["degree"] == "2nd+"
+    assert digest["Yuki Tanaka"]["degree"] == "2nd+"
+
+    cluster = srv.get_event_cluster(srv.list_event_clusters()["clusters"][0]["slug"])
+    assert "Priya Raghavan" in cluster["first_degree_connections"]
+    assert set(cluster["not_connected_yet"]) == {"Rafael Santos", "Yuki Tanaka"}
+    assert len(cluster["first_degree_connections"]) + len(cluster["not_connected_yet"]) == 9

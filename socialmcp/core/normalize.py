@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -141,11 +142,18 @@ def slugify(value: str, *, max_len: int = 80) -> str:
     return text[:max_len]
 
 
-def normalize_profile_url(url: str | None) -> str | None:
-    """Canonicalize a social profile URL, dropping tracking params and casing.
+def normalize_profile_url(
+    url: str | None, canonicalize: Callable[[str, str], str | None] | None = None
+) -> str | None:
+    """Canonicalize a profile URL: strip scheme noise, casing and tracking params.
 
-    Returns None for blanks and for values that are not recognizable profile
-    URLs, so callers can fall back to name-based identity.
+    Host-agnostic on purpose. Platform-specific path rules (which path prefixes
+    identify a person, which are aliases of each other) belong to that
+    platform's adapter, which passes them in as `canonicalize(host, path)`.
+    Without one, a URL is reduced to a lowercase host plus path.
+
+    Returns None for blanks and for values that are not recognizable URLs, so
+    callers can fall back to name-based identity.
     """
     if not url:
         return None
@@ -163,13 +171,8 @@ def normalize_profile_url(url: str | None) -> str | None:
         host = host.split(".", 1)[1]
     path = unquote(parsed.path).rstrip("/")
 
-    if "linkedin." in host:
-        match = re.search(r"/(in|pub|company|school|sales/lead)/([^/]+)", path)
-        if not match:
-            return None
-        kind, handle = match.group(1), match.group(2).lower()
-        kind = "in" if kind in {"pub", "sales/lead"} else kind
-        return f"https://www.linkedin.com/{kind}/{handle}"
+    if canonicalize is not None:
+        return canonicalize(host, path)
 
     if not path or path == "/":
         return None

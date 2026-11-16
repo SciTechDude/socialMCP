@@ -34,6 +34,7 @@ from .db import Database, json_dumps
 from .ingest import IngestError, ingest_path
 from .models import IngestStats
 from .normalize import utcnow_iso
+from .vocabulary import vocabulary_for
 
 log = logging.getLogger("socialmcp.harness")
 
@@ -234,7 +235,10 @@ class Harness:
             parts.append(f"{stats.interactions_new} interactions")
         if stats.history_changes:
             parts.append(f"{stats.history_changes} job changes")
-        parts.append(f"{stats.pending_invitations} invites still pending")
+        # The platform supplies the noun: LinkedIn says "invitations", an
+        # asymmetric source would say "follow requests".
+        noun = vocabulary_for(stats.source).request_noun
+        parts.append(f"{stats.pending_invitations} {noun}s still pending")
         summary = f"Processed {stats.archive}: " + ", ".join(parts)
         if stats.clusters_created:
             summary += f", {stats.clusters_created} new event cluster(s)"
