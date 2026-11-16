@@ -74,12 +74,99 @@ def reveal(path: Path) -> None:
     subprocess.run(["open", str(path)], check=False, timeout=30)
 
 
+def embedding_available(config) -> bool:
+    """Is a local embedding model reachable? Non-fatal either way.
+
+    Checked so the setup dialog can say what the user is getting. Without it
+    search still works, just literally — and someone who does not know that
+    will read a thin result as a broken product.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    url = config.embedding.ollama_url.rstrip("/")
+    try:
+        with urllib.request.urlopen(f"{url}/api/tags", timeout=2) as response:
+            models = {m.get("name", "") for m in json.loads(response.read()).get("models", [])}
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return False
+    wanted = config.embedding.model.split(":")[0]
+    return any(name.split(":")[0] == wanted for name in models)
+
+
+def build_setup_report(results, drop_folder: Path, *, embeddings: bool) -> tuple[str, tuple[str, ...]]:
+    """The dialog text and buttons for a finished setup run.
+
+    Separated from display so the wording can be tested. Every result status
+    has to be accounted for here: a run where every client was `skipped` once
+    reported "Connected to: none" and left the user with no idea why.
+    """
+    connected = [r for r in results if r.status in {"configured", "updated", "already"}]
+    blocked = [r for r in results if r.status == "skipped"]
+    failed = [r for r in results if r.status == "failed"]
+    restart = [r for r in results if r.status in {"configured", "updated"}]
+
+    lines: list[str] = []
+    buttons: list[str] = []
+
+    if connected:
+        lines.append(f"Connected to: {', '.join(r.client for r in connected)}")
+    if blocked:
+        # Almost always a command-line install of SocialMCP already registered.
+        lines += [
+            "",
+            f"Already set up by another copy: {', '.join(r.client for r in blocked)}",
+            "",
+            "That usually means SocialMCP was installed from the command line on",
+            "this Mac. Replacing it points those apps at this app instead.",
+        ]
+        buttons.append("Replace it")
+    if failed:
+        lines += [
+            "",
+            f"Could not configure: {', '.join(r.client for r in failed)}",
+            f"({failed[0].detail})",
+        ]
+
+    if not connected and not blocked:
+        lines.append("No AI app could be configured.")
+
+    lines += [
+        "",
+        "Next:",
+        "",
+        "1. Put your LinkedIn data export .zip in:",
+        f"   {drop_folder}",
+        "   (LinkedIn: Settings & Privacy -> Data Privacy -> Get a copy of your data,",
+        "    and choose the larger archive.)",
+        "",
+        "2. Quit and reopen your AI app.",
+        "",
+        '3. Ask it: "what can you do with my network?"',
+    ]
+    if restart:
+        lines += ["", f"Restart needed for: {', '.join(r.client for r in restart)}"]
+
+    if not embeddings:
+        lines += [
+            "",
+            "Optional: searches currently match words literally. Installing Ollama",
+            "(free, runs on this Mac, nothing uploaded) lets you search by meaning.",
+        ]
+        buttons.append("Get Ollama")
+
+    buttons.append("Open the folder")
+    return "\n".join(lines), tuple(buttons)
+
+
 def setup_flow() -> int:
     """What happens when a person double-clicks the app."""
     # Everything lives under Application Support, not next to the .app, so
     # moving or replacing the app never touches the user's data.
     os.environ.setdefault("SOCIALMCP_HOME", str(APP_SUPPORT))
 
+    from socialmcp import clients as clients_module
     from socialmcp.clients import known_clients, setup_all
     from socialmcp.config import load_config
 
@@ -90,16 +177,12 @@ def setup_flow() -> int:
     env = {"SOCIALMCP_HOME": str(config.home), "SOCIALMCP_DROP_DIR": str(config.drop_dir)}
     # The bundle's own executable is the launch command, so the config a client
     # receives keeps working with no Python installed on the machine.
-    from socialmcp import clients as clients_module
-
     command = launch_command()
     clients_module.resolve_launch_command = lambda: clients_module.LaunchCommand(
         command=command[0], args=command[1:]
     )
 
     _, results = setup_all(env=env)
-    configured = [r for r in results if r.status in {"configured", "updated"}]
-    already = [r for r in results if r.status == "already"]
 
     if not results:
         choice = dialog(
@@ -114,23 +197,22 @@ def setup_flow() -> int:
             subprocess.run(["open", "https://claude.ai/download"], check=False, timeout=30)
         return 1
 
-    connected = ", ".join(r.client for r in configured + already) or "none"
-    lines = [
-        f"Connected to: {connected}",
-        "",
-        "Next:",
-        "",
-        "1. Put your LinkedIn data export .zip in the folder that opens next.",
-        "   (LinkedIn: Settings & Privacy -> Data Privacy -> Get a copy of your data,",
-        "    and choose the larger archive.)",
-        "",
-        "2. Quit and reopen your AI app.",
-        "",
-        '3. Ask it: "what can you do with my network?"',
-    ]
-    if configured:
-        lines += ["", f"Restart needed for: {', '.join(r.client for r in configured)}"]
-    dialog("\n".join(lines), buttons=("Open the folder",))
+    message, buttons = build_setup_report(
+        results, drop, embeddings=embedding_available(config)
+    )
+    choice = dialog(message, buttons=buttons)
+
+    if choice == "Replace it":
+        # The user asked for this app to win, so overwrite the other entry.
+        _, results = setup_all(env=env, force=True)
+        message, buttons = build_setup_report(
+            results, drop, embeddings=embedding_available(config)
+        )
+        choice = dialog(message, buttons=tuple(b for b in buttons if b != "Replace it"))
+
+    if choice == "Get Ollama":
+        subprocess.run(["open", "https://ollama.com"], check=False, timeout=30)
+
     reveal(drop)
     return 0
 

@@ -145,3 +145,96 @@ def test_doctor_never_suggests_a_bare_pip():
     hint = install_hint("sqlite-vec")
     assert "-m pip install" in hint
     assert sys.executable in hint, "the hint must name the interpreter it applies to"
+
+
+# ---------------------------------------------------------------------------
+# the app's setup dialog
+# ---------------------------------------------------------------------------
+
+
+def _load_app_main():
+    """Import packaging/macos/app_main.py, which is outside the package."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("app_main", MACOS / "app_main.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _Result:
+    def __init__(self, client: str, status: str, detail: str = ""):
+        self.client, self.status, self.detail = client, status, detail
+
+
+def test_setup_report_explains_a_blocked_client():
+    """A pip-installed copy already registered must not read as "nothing happened".
+
+    This case previously produced "Connected to: none" with no explanation,
+    leaving the user with a working install they believed had failed.
+    """
+    app = _load_app_main()
+    message, buttons = app.build_setup_report(
+        [_Result("Claude Desktop", "skipped")], Path("/tmp/drop"), embeddings=True
+    )
+
+    assert "Already set up by another copy" in message
+    assert "Claude Desktop" in message
+    assert "command line" in message, "the likely cause should be named"
+    assert "Replace it" in buttons
+    assert "Connected to:" not in message
+
+
+def test_setup_report_lists_connected_clients_and_restarts():
+    app = _load_app_main()
+    message, buttons = app.build_setup_report(
+        [_Result("Cursor", "configured"), _Result("Claude Code", "already")],
+        Path("/tmp/drop"),
+        embeddings=True,
+    )
+
+    assert "Connected to: Cursor, Claude Code" in message
+    # Only newly written configs need a restart; an existing one does not.
+    assert "Restart needed for: Cursor" in message
+    assert "Replace it" not in buttons
+    assert buttons[-1] == "Open the folder"
+
+
+def test_setup_report_surfaces_a_failure_with_its_reason():
+    app = _load_app_main()
+    message, _ = app.build_setup_report(
+        [_Result("Zed", "failed", "its config file is not valid JSON")],
+        Path("/tmp/drop"),
+        embeddings=True,
+    )
+    assert "Could not configure: Zed" in message
+    assert "not valid JSON" in message
+
+
+def test_setup_report_offers_ollama_only_when_missing():
+    """Literal-only search is not an error, but the user must know about it."""
+    app = _load_app_main()
+
+    without, buttons_without = app.build_setup_report(
+        [_Result("Cursor", "configured")], Path("/tmp/drop"), embeddings=False
+    )
+    assert "match words literally" in without
+    assert "nothing uploaded" in without, "the privacy point is the reason to accept"
+    assert "Get Ollama" in buttons_without
+
+    with_model, buttons_with = app.build_setup_report(
+        [_Result("Cursor", "configured")], Path("/tmp/drop"), embeddings=True
+    )
+    assert "Ollama" not in with_model
+    assert "Get Ollama" not in buttons_with
+
+
+def test_setup_report_always_tells_the_user_where_the_folder_is():
+    app = _load_app_main()
+    for embeddings in (True, False):
+        for status in ("configured", "already", "skipped", "failed"):
+            message, buttons = app.build_setup_report(
+                [_Result("Cursor", status)], Path("/tmp/the-drop-folder"), embeddings=embeddings
+            )
+            assert "/tmp/the-drop-folder" in message, status
+            assert buttons, status
