@@ -286,8 +286,13 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
                 for c in contacts
                 if c["degree"] == "1st" and not c["followed_up"]
             ],
-            "invite_unanswered": [
-                c["full_name"] for c in contacts if c["degree"] != "1st"
+            # Split by who owes the next action. "Pending" alone is ambiguous
+            # and reads as if the user is the blocker in both cases.
+            "invite_waiting_on_them": [
+                c["full_name"] for c in contacts if c.get("waiting_on") == "them"
+            ],
+            "invite_waiting_on_you": [
+                c["full_name"] for c in contacts if c.get("waiting_on") == "you"
             ],
         },
         "relationships": relationship_breakdown(contacts),
@@ -316,19 +321,64 @@ def list_event_clusters(limit: int = 25) -> dict[str, Any]:
 
 
 @mcp.tool()
-def list_pending_invitations(min_days_waiting: int = 0, limit: int = 50) -> dict[str, Any]:
-    """List invitations the user sent that were never accepted — the follow-up list.
+def list_pending_invitations(
+    direction: str = "all", min_days_waiting: int = 0, limit: int = 50
+) -> dict[str, Any]:
+    """List outstanding invitations in both directions, grouped by who must act.
+
+    Two different to-do lists, and conflating them is misleading: an invitation
+    the user sent is waiting on the other person and cannot be progressed from
+    this side, while an invitation the user received is waiting on the user and
+    can be cleared today.
+
+    Lapsed invitations are excluded — they disappeared from a later export
+    without connecting, so there is nothing left to wait for.
 
     Args:
-        min_days_waiting: Only include invites older than this many days.
-        limit: Max rows.
+        direction: 'all' (default), 'sent' (waiting on them), or
+            'received' (waiting on you).
+        min_days_waiting: Only include invitations older than this many days.
+        limit: Max rows per group.
     """
     st = state()
-    rows = st.db.query(
-        "SELECT * FROM v_pending_invitations WHERE COALESCE(days_waiting, 0) >= ? LIMIT ?",
-        (max(0, min_days_waiting), max(1, min(limit, 500))),
-    )
-    return {"count": len(rows), "pending": [dict(r) for r in rows]}
+    limit = max(1, min(limit, 500))
+    wanted = (direction or "all").lower()
+
+    def fetch(status: str) -> list[dict[str, Any]]:
+        rows = st.db.query(
+            """
+            SELECT c.id, c.source, c.full_name, c.company, c."position", c.profile_url,
+                   c.status, c.origin_direction, c.invite_lapsed_at, c.origin_note,
+                   c.invited_at,
+                   CAST(julianday('now') - julianday(c.invited_at) AS INTEGER) AS days_waiting
+            FROM contacts c
+            WHERE c.status = ? AND c.invite_lapsed_at IS NULL
+              AND COALESCE(CAST(julianday('now') - julianday(c.invited_at) AS INTEGER), 0) >= ?
+            ORDER BY c.invited_at
+            LIMIT ?
+            """,
+            (status, max(0, min_days_waiting), limit),
+        )
+        return describe_rows([dict(r) for r in rows])
+
+    out: dict[str, Any] = {}
+    if wanted in {"all", "sent"}:
+        sent = fetch("pending")
+        out["waiting_on_them"] = {
+            "count": len(sent),
+            "meaning": "you sent these invitations; the other person has not accepted",
+            "action": "nothing to do from your side except withdraw or follow up another way",
+            "invitations": sent,
+        }
+    if wanted in {"all", "received"}:
+        received = fetch("received")
+        out["waiting_on_you"] = {
+            "count": len(received),
+            "meaning": "they invited you and you have not accepted",
+            "action": "you can clear these today by accepting or declining",
+            "invitations": received,
+        }
+    return out
 
 
 @mcp.tool()
@@ -400,6 +450,8 @@ def get_network_digest(
             # further; the export cannot narrow it beyond that. Distinct from
             # `followed_up`, which is whether they have ever been spoken to.
             "degree": row["degree"],
+            # Who owes the next action, when a request is outstanding.
+            "waiting_on": row.get("waiting_on"),
             "followed_up": bool(row["followed_up"]),
         }
         if row["event"]:

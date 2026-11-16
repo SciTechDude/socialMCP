@@ -66,6 +66,21 @@ def edge_state(
     return EdgeState.UNKNOWN
 
 
+# Who has to do something next. Platform-neutral, because it follows from the
+# direction of the outstanding request rather than from any platform's wording:
+# if you sent it, you are waiting on them; if they sent it, they are waiting on
+# you. A lapsed or completed tie leaves nobody waiting.
+WAITING_ON: dict[EdgeState, str] = {
+    EdgeState.OUTBOUND_PENDING: "them",
+    EdgeState.INBOUND_PENDING: "you",
+}
+
+
+def waiting_on(state: EdgeState) -> str | None:
+    """'them', 'you', or None when there is no outstanding request."""
+    return WAITING_ON.get(state)
+
+
 def is_linked(state: EdgeState) -> bool:
     """Is the tie actually established, whatever the platform calls that?"""
     return state in {EdgeState.MUTUAL, EdgeState.MUTUAL_ORIGIN_UNKNOWN}
@@ -113,6 +128,11 @@ class Vocabulary:
         state = edge_state(row["status"], direction, lapsed_at)
         label = self.labeller(state, direction) if self.labeller else self.label(state)
         out: dict[str, Any] = {"how": label, "edge_state": str(state)}
+        # Stated rather than implied: a reader should never have to work out
+        # from a label which side owes the next action.
+        pending_on = waiting_on(state)
+        if pending_on:
+            out["waiting_on"] = pending_on
         tier = self.tier(state)
         if tier is not None:
             out["degree"] = tier

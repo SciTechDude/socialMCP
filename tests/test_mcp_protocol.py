@@ -175,7 +175,12 @@ def test_read_tools_return_real_data(session_output: dict[str, Any]):
     assert session_output["stats"]["contacts"] == 12
     assert session_output["stats"]["adapters_available"] == ["linkedin"]
     assert session_output["search"]["returned"] > 0
-    assert session_output["pending"]["pending"][0]["full_name"] == "Rafael Santos"
+    # Grouped by who owes the next action, not one ambiguous "pending" list.
+    pending = session_output["pending"]
+    assert pending["waiting_on_them"]["invitations"][0]["full_name"] == "Rafael Santos"
+    assert pending["waiting_on_them"]["invitations"][0]["waiting_on"] == "them"
+    assert pending["waiting_on_you"]["invitations"][0]["full_name"] == "Yuki Tanaka"
+    assert pending["waiting_on_you"]["invitations"][0]["waiting_on"] == "you"
 
 
 def test_write_tools_persist_through_the_protocol(session_output: dict[str, Any]):
