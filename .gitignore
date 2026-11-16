@@ -71,9 +71,11 @@ dist/
 *.dmg
 *.pkg
 *.app/
-.venv/
-.venv-build/
-venv/
+.venv
+.venv-*
+venv
+venv-*
+*.venv
 .pytest_cache/
 .ruff_cache/
 .coverage
