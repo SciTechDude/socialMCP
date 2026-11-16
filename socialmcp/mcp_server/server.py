@@ -68,6 +68,10 @@ How to work with it:
 * Event clusters are auto-detected bursts of connections. New ones have
   placeholder names like "12-15 Oct 2025 burst (17 connections)" — if the user
   tells you what that event was, call `rename_event_cluster`.
+* `follow_up_needed` on an event is already split into
+  `connected_but_never_messaged` and `invite_unanswered`. Report them as two
+  groups; collapsing them into one list misrepresents connected people as
+  strangers.
 * Two different facts, never conflate them:
     - `degree`: '1st' means a first-degree connection. '2nd+' means they are
       absent from Connections.csv, so they are 2nd degree or further - an
@@ -165,6 +169,11 @@ def search_network(
         has_note: True to return only contacts that have an origin note or logged notes.
         mode: 'hybrid' (default), 'keyword', or 'semantic'.
         limit: Max contacts to return (1-200).
+
+    Each contact carries `degree` ('1st' = connected, '2nd+' = an invitation is
+    outstanding) and `how` (who approached whom). A first-degree connection the
+    user has never messaged is the normal case after a conference - do not
+    describe those people as unconnected.
     """
     st = state()
     filters = SearchFilters(
@@ -248,7 +257,6 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
         (cluster["id"], max(1, min(limit, 500))),
     )
     contacts = describe_rows([dict(r) for r in rows])
-    never_accepted = [c["full_name"] for c in contacts if c["status"] in {"pending", "received"}]
     by_category: dict[str, list[str]] = {}
     for contact in contacts:
         by_category.setdefault(contact["how"], []).append(contact["full_name"])
@@ -266,8 +274,27 @@ def get_event_cluster(event: str, limit: int = 100) -> dict[str, Any]:
         },
         "returned": len(contacts),
         "contacts": contacts,
-        "not_followed_up": [c["full_name"] for c in contacts if not c["followed_up"]],
-        "invitation_never_accepted": never_accepted,
+        # Split deliberately: a flat "not followed up" list invites the
+        # conclusion that these people are not connected, when almost all of
+        # them are first-degree connections who simply have not been messaged.
+        # Those are two different follow-up problems with two different fixes
+        # (send a message vs. get the invitation accepted), so the tool reports
+        # them separately rather than leaving a reader to recombine them.
+        "follow_up_needed": {
+            "connected_but_never_messaged": [
+                c["full_name"]
+                for c in contacts
+                if c["degree"] == "1st" and not c["followed_up"]
+            ],
+            # Split by who owes the next action. "Pending" alone is ambiguous
+            # and reads as if the user is the blocker in both cases.
+            "invite_waiting_on_them": [
+                c["full_name"] for c in contacts if c.get("waiting_on") == "them"
+            ],
+            "invite_waiting_on_you": [
+                c["full_name"] for c in contacts if c.get("waiting_on") == "you"
+            ],
+        },
         "relationships": relationship_breakdown(contacts),
         "names_by_relationship": by_category,
         "first_degree_connections": first_degree,
@@ -294,19 +321,64 @@ def list_event_clusters(limit: int = 25) -> dict[str, Any]:
 
 
 @mcp.tool()
-def list_pending_invitations(min_days_waiting: int = 0, limit: int = 50) -> dict[str, Any]:
-    """List invitations the user sent that were never accepted — the follow-up list.
+def list_pending_invitations(
+    direction: str = "all", min_days_waiting: int = 0, limit: int = 50
+) -> dict[str, Any]:
+    """List outstanding invitations in both directions, grouped by who must act.
+
+    Two different to-do lists, and conflating them is misleading: an invitation
+    the user sent is waiting on the other person and cannot be progressed from
+    this side, while an invitation the user received is waiting on the user and
+    can be cleared today.
+
+    Lapsed invitations are excluded — they disappeared from a later export
+    without connecting, so there is nothing left to wait for.
 
     Args:
-        min_days_waiting: Only include invites older than this many days.
-        limit: Max rows.
+        direction: 'all' (default), 'sent' (waiting on them), or
+            'received' (waiting on you).
+        min_days_waiting: Only include invitations older than this many days.
+        limit: Max rows per group.
     """
     st = state()
-    rows = st.db.query(
-        "SELECT * FROM v_pending_invitations WHERE COALESCE(days_waiting, 0) >= ? LIMIT ?",
-        (max(0, min_days_waiting), max(1, min(limit, 500))),
-    )
-    return {"count": len(rows), "pending": [dict(r) for r in rows]}
+    limit = max(1, min(limit, 500))
+    wanted = (direction or "all").lower()
+
+    def fetch(status: str) -> list[dict[str, Any]]:
+        rows = st.db.query(
+            """
+            SELECT c.id, c.source, c.full_name, c.company, c."position", c.profile_url,
+                   c.status, c.origin_direction, c.invite_lapsed_at, c.origin_note,
+                   c.invited_at,
+                   CAST(julianday('now') - julianday(c.invited_at) AS INTEGER) AS days_waiting
+            FROM contacts c
+            WHERE c.status = ? AND c.invite_lapsed_at IS NULL
+              AND COALESCE(CAST(julianday('now') - julianday(c.invited_at) AS INTEGER), 0) >= ?
+            ORDER BY c.invited_at
+            LIMIT ?
+            """,
+            (status, max(0, min_days_waiting), limit),
+        )
+        return describe_rows([dict(r) for r in rows])
+
+    out: dict[str, Any] = {}
+    if wanted in {"all", "sent"}:
+        sent = fetch("pending")
+        out["waiting_on_them"] = {
+            "count": len(sent),
+            "meaning": "you sent these invitations; the other person has not accepted",
+            "action": "nothing to do from your side except withdraw or follow up another way",
+            "invitations": sent,
+        }
+    if wanted in {"all", "received"}:
+        received = fetch("received")
+        out["waiting_on_you"] = {
+            "count": len(received),
+            "meaning": "they invited you and you have not accepted",
+            "action": "you can clear these today by accepting or declining",
+            "invitations": received,
+        }
+    return out
 
 
 @mcp.tool()
@@ -378,6 +450,8 @@ def get_network_digest(
             # further; the export cannot narrow it beyond that. Distinct from
             # `followed_up`, which is whether they have ever been spoken to.
             "degree": row["degree"],
+            # Who owes the next action, when a request is outstanding.
+            "waiting_on": row.get("waiting_on"),
             "followed_up": bool(row["followed_up"]),
         }
         if row["event"]:

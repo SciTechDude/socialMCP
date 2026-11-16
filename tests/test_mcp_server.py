@@ -69,7 +69,23 @@ def test_event_cluster_tool_lists_people_and_followups(server_state):
     detail = srv.get_event_cluster(clusters[0]["slug"])
     assert detail["cluster"]["contact_count"] == 9
     assert len(detail["contacts"]) == 9
-    assert "Marcus Webb" in detail["not_followed_up"]
+
+    # Two distinct follow-up problems, reported separately. Marcus is a
+    # first-degree connection who has never been messaged; Rafael and Yuki are
+    # not connected at all. Flattening these into one list is the bug this
+    # structure exists to prevent.
+    follow_up = detail["follow_up_needed"]
+    assert "Marcus Webb" in follow_up["connected_but_never_messaged"]
+    assert "Marcus Webb" not in follow_up["invite_waiting_on_them"]
+    assert "Marcus Webb" not in follow_up["invite_waiting_on_you"]
+    # And the outstanding invitations are split by who must act: Rafael has not
+    # answered the user, while Yuki is waiting on the user to accept.
+    assert follow_up["invite_waiting_on_them"] == ["Rafael Santos"]
+    assert follow_up["invite_waiting_on_you"] == ["Yuki Tanaka"]
+    assert all(
+        name in detail["first_degree_connections"]
+        for name in follow_up["connected_but_never_messaged"]
+    )
 
 
 def test_note_tool_round_trips_by_name(server_state):
@@ -179,3 +195,37 @@ def test_degree_distinguishes_connected_from_merely_met(server_state):
     assert "Priya Raghavan" in cluster["first_degree_connections"]
     assert set(cluster["not_connected_yet"]) == {"Rafael Santos", "Yuki Tanaka"}
     assert len(cluster["first_degree_connections"]) + len(cluster["not_connected_yet"]) == 9
+
+
+def test_pending_invitations_say_who_must_act(server_state):
+    """"Pending" alone reads as if the user is the blocker in both directions.
+
+    An invitation the user sent cannot be progressed from this side; one the
+    user received can be cleared today. The tool groups them accordingly
+    instead of returning a single list.
+    """
+    both = srv.list_pending_invitations()
+
+    assert both["waiting_on_them"]["count"] == 1
+    assert both["waiting_on_them"]["invitations"][0]["full_name"] == "Rafael Santos"
+    assert "not accepted" in both["waiting_on_them"]["meaning"]
+
+    assert both["waiting_on_you"]["count"] == 1
+    assert both["waiting_on_you"]["invitations"][0]["full_name"] == "Yuki Tanaka"
+    assert "accepting or declining" in both["waiting_on_you"]["action"]
+
+    # Each invitation also carries the answer on itself, not only in its group.
+    assert both["waiting_on_them"]["invitations"][0]["waiting_on"] == "them"
+    assert both["waiting_on_you"]["invitations"][0]["waiting_on"] == "you"
+
+    # Either direction can be requested alone.
+    assert set(srv.list_pending_invitations(direction="sent")) == {"waiting_on_them"}
+    assert set(srv.list_pending_invitations(direction="received")) == {"waiting_on_you"}
+
+
+def test_completed_and_lapsed_ties_have_nobody_waiting(server_state):
+    """`waiting_on` is absent when there is no outstanding request at all."""
+    digest = {p["name"]: p for p in srv.get_network_digest()["people"]}
+    assert "waiting_on" not in digest["Priya Raghavan"]      # already connected
+    assert digest["Rafael Santos"]["waiting_on"] == "them"
+    assert digest["Yuki Tanaka"]["waiting_on"] == "you"
