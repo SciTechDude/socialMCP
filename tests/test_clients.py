@@ -168,3 +168,29 @@ def test_known_clients_are_well_formed():
         assert client.config_path.is_absolute()
         assert client.servers_key in {"mcpServers", "servers", "context_servers"}
         assert client.display_name
+
+
+def test_launch_command_prefers_the_script_beside_the_interpreter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Found while dogfooding: a venv invoked by absolute path is not on PATH.
+
+    `shutil.which` then misses the console script sitting next to
+    sys.executable, and the command degrades to `python -m socialmcp.cli serve`.
+    That works, but the console script is the stabler thing to write into
+    someone else's config file.
+    """
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "python3").write_text("")
+    script = bin_dir / "socialmcp-server"
+    script.write_text("#!/bin/sh\n")
+    script.chmod(0o755)
+
+    monkeypatch.setattr("socialmcp.clients.sys.executable", str(bin_dir / "python3"))
+    monkeypatch.setattr("socialmcp.clients.shutil.which", lambda _name: None)
+
+    launch = resolve_launch_command()
+
+    assert launch.command == str(script)
+    assert launch.args == []

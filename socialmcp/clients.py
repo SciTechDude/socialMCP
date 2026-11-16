@@ -81,6 +81,16 @@ def resolve_launch_command() -> LaunchCommand:
     `sys.executable` rather than "python", because a client launched from the
     macOS Dock has a minimal PATH where "python" often does not exist at all.
     """
+    # Look beside the running interpreter first. PATH is unreliable here: the
+    # user may have launched us by absolute path out of a venv that was never
+    # activated, and `which` would then miss the console script sitting right
+    # next to sys.executable.
+    bin_dir = Path(sys.executable).parent
+    for name in ("socialmcp-server", "socialmcp-server.exe"):
+        candidate = bin_dir / name
+        if candidate.is_file():
+            return LaunchCommand(command=str(candidate.resolve()))
+
     script = shutil.which("socialmcp-server")
     if script:
         return LaunchCommand(command=str(Path(script).resolve()))
