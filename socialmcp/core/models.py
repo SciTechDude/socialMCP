@@ -86,7 +86,8 @@ class IngestStats:
     skipped_duplicate: bool = False
     files_parsed: list[str] = field(default_factory=list)
     contacts_new: int = 0
-    contacts_updated: int = 0
+    contacts_updated: int = 0      # matched an existing row AND changed a field
+    contacts_unchanged: int = 0    # matched an existing row, nothing to change
     interactions_new: int = 0
     history_changes: int = 0
     clusters_created: int = 0
@@ -104,6 +105,7 @@ class IngestStats:
             "files_parsed": self.files_parsed,
             "contacts_new": self.contacts_new,
             "contacts_updated": self.contacts_updated,
+            "contacts_unchanged": self.contacts_unchanged,
             "interactions_new": self.interactions_new,
             "history_changes": self.history_changes,
             "clusters_created": self.clusters_created,
