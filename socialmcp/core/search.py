@@ -36,6 +36,10 @@ class SearchFilters:
     event: str | None = None
     connected_after: str | None = None
     connected_before: str | None = None
+    # "Met" window: matches the connection date, or the invitation date for
+    # people who never accepted. This is what an event-shaped question wants.
+    met_after: str | None = None
+    met_before: str | None = None
     has_note: bool | None = None
     source: str | None = None
 
@@ -60,6 +64,12 @@ class SearchFilters:
         if self.connected_before:
             clauses.append("c.connected_on <= ?")
             params.append(self.connected_before[:10])
+        if self.met_after:
+            clauses.append("COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) >= ?")
+            params.append(self.met_after[:10])
+        if self.met_before:
+            clauses.append("COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) <= ?")
+            params.append(self.met_before[:10])
         if self.has_note is True:
             clauses.append("(c.origin_note IS NOT NULL OR c.search_blob != '')")
         if self.has_note is False:
@@ -121,7 +131,7 @@ def search_network(
         # Pure structured browse: newest connections first.
         rows = db.query(
             f"""SELECT {CONTACT_COLUMNS} FROM contacts c WHERE {where_sql}
-                ORDER BY COALESCE(c.connected_on, c.invited_at) DESC, c.full_name
+                ORDER BY COALESCE(c.connected_on, substr(c.invited_at, 1, 10)) DESC, c.full_name
                 LIMIT ?""",
             [*where_params, limit],
         )

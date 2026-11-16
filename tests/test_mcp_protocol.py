@@ -188,5 +188,5 @@ def test_cluster_rename_round_trips(session_output: dict[str, Any]):
     assert session_output["renamed"]["name"] == "Seattle AI Week 2025"
     detail = session_output["cluster_detail"]
     assert detail["cluster"]["name_is_placeholder"] is False
-    assert detail["cluster"]["contact_count"] == 7
-    assert len(detail["contacts"]) == 7
+    assert detail["cluster"]["contact_count"] == 9
+    assert len(detail["contacts"]) == 9

@@ -25,6 +25,7 @@ EXPECTED_TOOLS = {
     "trigger_archive_ingest",
     "reindex_embeddings",
     "get_network_briefing",
+    "get_network_digest",
 }
 
 
@@ -66,8 +67,8 @@ def test_event_cluster_tool_lists_people_and_followups(server_state):
     assert clusters and clusters[0]["name_is_placeholder"] is True
 
     detail = srv.get_event_cluster(clusters[0]["slug"])
-    assert detail["cluster"]["contact_count"] == 7
-    assert len(detail["contacts"]) == 7
+    assert detail["cluster"]["contact_count"] == 9
+    assert len(detail["contacts"]) == 9
     assert "Marcus Webb" in detail["not_followed_up"]
 
 
@@ -106,3 +107,30 @@ def test_briefing_tool_is_serializable(server_state):
     json.dumps(briefing, default=str)
     assert briefing["stats"]["contacts"] == 12
     assert briefing["pending_invitations"][0]["full_name"] == "Rafael Santos"
+
+
+def test_digest_returns_a_compact_slate_for_the_model_to_rank(server_state):
+    """The alternative to similarity ranking: hand the model the whole field.
+
+    Cheap enough to be practical (~20 tokens per person) and complete, so the
+    model's own judgement decides who matters instead of a cosine score.
+    """
+    digest = srv.get_network_digest()
+
+    assert digest["total_matching"] == 12
+    assert digest["returned"] == 12
+    assert digest["truncated"] is False
+
+    by_name = {p["name"]: p for p in digest["people"]}
+    priya = by_name["Priya Raghavan"]
+    assert priya["role"] == "Head of GTM @ Northwind AI"
+    assert "Seattle AI Week" in priya["how_we_met"]
+    assert priya["met"] == "2025-10-13"
+    # Someone who never accepted is in the slate, flagged, not hidden.
+    assert by_name["Rafael Santos"]["status"] == "pending"
+
+    # Filters compose, and notes can be dropped to save tokens.
+    scoped = srv.get_network_digest(status="connected", include_notes=False, limit=3)
+    assert scoped["returned"] == 3
+    assert scoped["truncated"] is True
+    assert all("how_we_met" not in p for p in scoped["people"])
