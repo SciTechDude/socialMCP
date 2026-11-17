@@ -26,7 +26,7 @@ Assistant:  7 people, 13-15 Oct. Four are still cold:
 
 ## Get it
 
-**Mac, no setup** — [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases/latest)
+**Mac, no setup** — [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases)
 → drag to Applications → double-click. It finds your AI app, connects itself,
 and opens the folder to drop your LinkedIn export into. No Python, no terminal.
 
