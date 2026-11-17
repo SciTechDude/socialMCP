@@ -25,6 +25,10 @@ MACOS = REPO / "packaging" / "macos"
 def test_packaging_files_are_present():
     for name in ("app_main.py", "socialmcp.spec", "build.sh", "entitlements.plist", "README.md"):
         assert (MACOS / name).is_file(), f"packaging/macos/{name} is missing"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no executable bit")
+def test_build_script_is_executable():
     assert (MACOS / "build.sh").stat().st_mode & 0o111, "build.sh must be executable"
 
 
@@ -180,7 +184,7 @@ def test_setup_report_explains_a_blocked_client():
     """
     app = _load_app_main()
     message, buttons = app.build_setup_report(
-        [_Result("Claude Desktop", "skipped")], Path("/tmp/drop"), embeddings=True
+        [_Result("Claude Desktop", "skipped")], Path("/tmp/drop") if sys.platform != "win32" else Path("C:/drop"), embeddings=True
     )
 
     assert "Already set up by another copy" in message
@@ -194,7 +198,7 @@ def test_setup_report_lists_connected_clients_and_restarts():
     app = _load_app_main()
     message, buttons = app.build_setup_report(
         [_Result("Cursor", "configured"), _Result("Claude Code", "already")],
-        Path("/tmp/drop"),
+        Path("/tmp/drop") if sys.platform != "win32" else Path("C:/drop"),
         embeddings=True,
     )
 
@@ -209,7 +213,7 @@ def test_setup_report_surfaces_a_failure_with_its_reason():
     app = _load_app_main()
     message, _ = app.build_setup_report(
         [_Result("Zed", "failed", "its config file is not valid JSON")],
-        Path("/tmp/drop"),
+        Path("/tmp/drop") if sys.platform != "win32" else Path("C:/drop"),
         embeddings=True,
     )
     assert "Could not configure: Zed" in message
@@ -221,14 +225,14 @@ def test_setup_report_offers_ollama_only_when_missing():
     app = _load_app_main()
 
     without, buttons_without = app.build_setup_report(
-        [_Result("Cursor", "configured")], Path("/tmp/drop"), embeddings=False
+        [_Result("Cursor", "configured")], Path("/tmp/drop") if sys.platform != "win32" else Path("C:/drop"), embeddings=False
     )
     assert "match words literally" in without
     assert "nothing uploaded" in without, "the privacy point is the reason to accept"
     assert "Get Ollama" in buttons_without
 
     with_model, buttons_with = app.build_setup_report(
-        [_Result("Cursor", "configured")], Path("/tmp/drop"), embeddings=True
+        [_Result("Cursor", "configured")], Path("/tmp/drop") if sys.platform != "win32" else Path("C:/drop"), embeddings=True
     )
     assert "Ollama" not in with_model
     assert "Get Ollama" not in buttons_with
@@ -239,7 +243,7 @@ def test_setup_report_always_tells_the_user_where_the_folder_is():
     for embeddings in (True, False):
         for status in ("configured", "already", "skipped", "failed"):
             message, buttons = app.build_setup_report(
-                [_Result("Cursor", status)], Path("/tmp/the-drop-folder"), embeddings=embeddings
+                [_Result("Cursor", status)], Path("/tmp/the-drop-folder") if sys.platform != "win32" else Path("C:/the-drop-folder"), embeddings=embeddings
             )
-            assert "/tmp/the-drop-folder" in message, status
+            assert str(Path("/tmp/the-drop-folder") if sys.platform != "win32" else Path("C:/the-drop-folder")) in message, status
             assert buttons, status

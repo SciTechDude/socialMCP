@@ -59,25 +59,62 @@ That is the whole install. There is no Python to set up and no terminal to
 open — everything it needs is inside the app.
 
 <details>
-<summary>Windows, Linux, or if you would rather use the command line</summary>
+<summary><b>Windows</b></summary>
 
-You need **Python 3.11 or newer** (check with `python3 --version`; if it is
-missing or older, install it from [python.org/downloads](https://www.python.org/downloads/)
-and tick "Add Python to PATH" if Windows offers it).
+There is no Windows installer yet; the command line is the only route. It
+works, and it does not touch your system Python.
 
-Then install it in its own private environment, so nothing is added to the
-Python your system uses:
+1. **Install Python 3.11 or newer** from
+   [python.org/downloads](https://www.python.org/downloads/). On the first
+   installer screen, tick **"Add python.exe to PATH"** — if you miss it, the
+   commands below will not be found.
+
+2. Open **PowerShell** (press Start, type `powershell`, Enter) and run:
+
+   ```
+   py -m pip install --user pipx
+   py -m pipx ensurepath
+   ```
+
+   Close PowerShell and open it again, so the new commands are on your PATH.
+
+3. Install SocialMCP:
+
+   ```
+   pipx install https://github.com/SciTechDude/socialMCP/archive/refs/heads/main.zip
+   ```
+
+   (A `git+https://` URL also works, but only if you have Git installed —
+   Windows does not include it. The zip URL needs nothing extra.)
+
+4. Connect it and load your export:
+
+   ```
+   socialmcp setup
+   socialmcp drop
+   socialmcp ingest
+   ```
+
+`socialmcp setup` writes the config for Claude Desktop, Cursor, VS Code or
+Windsurf if you have them. `socialmcp drop` opens the folder in Explorer.
+
+If a command is not found, run `py -m pipx ensurepath` again and reopen
+PowerShell.
+
+</details>
+
+<details>
+<summary><b>Linux</b></summary>
 
 ```
-pip install --user pipx
-pipx install git+https://github.com/SciTechDude/socialMCP.git
+pipx install https://github.com/SciTechDude/socialMCP/archive/refs/heads/main.zip
+socialmcp setup && socialmcp drop && socialmcp ingest
 ```
 
-(If you already use `uv`: `uv tool install git+https://github.com/SciTechDude/socialMCP.git`.)
+Your distribution's `pipx` package works too (`apt install pipx`,
+`dnf install pipx`, `pacman -S python-pipx`). `socialmcp drop` uses
+`xdg-open`; if your setup has no file manager it just prints the path.
 
-Both commands keep SocialMCP and its dependencies in a folder of their own and
-make `socialmcp` available to type. Nothing else on your computer changes, and
-uninstalling removes all of it.
 </details>
 
 ## Step 3 — Connect it to your AI app
