@@ -21,7 +21,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         # Full history is not needed, but .git must exist: tests/test_privacy.py
         # asserts against the real .gitignore and the tracked file list.
       - uses: actions/setup-python@v5
@@ -42,7 +42,7 @@ jobs:
       matrix:
         mcp: ["1.*", ">=2,<3"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -62,7 +62,7 @@ jobs:
     name: clean install + stdio smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -159,7 +159,7 @@ jobs:
     name: privacy guards
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
