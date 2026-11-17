@@ -46,12 +46,15 @@ and opens the folder to drop your LinkedIn export into. No Python, no terminal.
 
 Then: [**5-minute quick start**](QUICKSTART.md) · [What it can do](#what-you-can-do-with-it)
 
-**Any platform, from the command line** — installed into its own isolated
-environment, never into your system Python:
+**Windows, Linux, or any Mac** — from the command line, installed into its own
+isolated environment and never into your system Python. There is no Windows or
+Linux installer; this is the supported route there, and
+[QUICKSTART.md](QUICKSTART.md) has step-by-step instructions for each:
 
 ```bash
 uv tool install git+https://github.com/SciTechDude/socialMCP.git
-# or: pipx install git+https://github.com/SciTechDude/socialMCP.git
+# no Git installed (common on Windows)? use the zip instead:
+# pipx install https://github.com/SciTechDude/socialMCP/archive/refs/heads/main.zip
 
 socialmcp setup        # connects the MCP clients you have installed
 socialmcp drop         # opens the folder for your export
