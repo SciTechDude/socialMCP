@@ -40,7 +40,7 @@ up to 24 hours. Carry on with Step 2 while you wait.
 
 **On a Mac, this is one download.**
 
-1. [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases/latest)
+1. [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases)
    — **there are two files, and you need the right one:**
 
    - `SocialMCP-arm64.dmg` if your Mac has an **Apple** chip (M1, M2, M3, M4)
