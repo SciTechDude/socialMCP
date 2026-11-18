@@ -109,6 +109,13 @@ one-liner. Especially worth reporting:
 never contact data. Describe the shape of the problem and I can usually
 reproduce it from the synthetic fixtures.
 
+Not a GitHub user? Message me on
+[LinkedIn](https://www.linkedin.com/in/anil-mandra-640aa5/) instead — a
+one-line DM saying what happened is worth more to me than silence. Also the
+place to ask for a Windows or Linux installer: both platforms work from the
+command line today, and if enough people want a double-click installer I will
+know it is worth building.
+
 ## Why this exists
 
 Networking at a fast-paced event creates a memory gap: three days later you have

@@ -257,6 +257,11 @@ Paste the output of `socialmcp doctor` if you like — it lists counts and
 statuses only, never names. **Don't paste your export, your database, or a
 screenshot with real people in it.**
 
+**No GitHub account?** Message me on
+[LinkedIn](https://www.linkedin.com/in/anil-mandra-640aa5/). A one-line DM is
+fine, and it is the right place to ask for something that does not exist yet —
+a Windows or Linux installer, for instance.
+
 ---
 
 ## Removing it
