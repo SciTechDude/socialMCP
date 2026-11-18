@@ -10,11 +10,19 @@
 #
 # Build with packaging/macos/build.sh, which passes the right paths.
 
+import tomllib
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_dynamic_libs
 
 REPO = Path(SPECPATH).resolve().parent.parent  # noqa: F821 - SPECPATH is injected
+
+# Read the version rather than repeating it. A bundle whose Info.plist disagrees
+# with the release it shipped in is the kind of mistake nobody notices until a
+# user reports a version that does not exist.
+VERSION = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+    "version"
+]
 
 datas = [
     # schema.sql is read at runtime by core/db.py; import analysis cannot see it.
@@ -97,11 +105,11 @@ app = BUNDLE(  # noqa: F821
     name="SocialMCP.app",
     icon=None,
     bundle_identifier="dev.scitechdude.socialmcp",
-    version="0.1.0",
+    version=VERSION,
     info_plist={
         "CFBundleName": "SocialMCP",
         "CFBundleDisplayName": "SocialMCP",
-        "CFBundleShortVersionString": "0.1.0",
+        "CFBundleShortVersionString": VERSION,
         "NSHumanReadableCopyright": "Apache-2.0",
         # Not a background app: it shows a dialog and quits.
         "LSBackgroundOnly": False,

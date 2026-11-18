@@ -247,3 +247,32 @@ def test_setup_report_always_tells_the_user_where_the_folder_is():
             )
             assert str(Path("/tmp/the-drop-folder") if sys.platform != "win32" else Path("C:/the-drop-folder")) in message, status
             assert buttons, status
+
+
+def test_version_is_declared_in_exactly_one_place():
+    """`__version__`, pyproject and the bundle's Info.plist must agree.
+
+    They used to be three literals. A release whose dmg reports a different
+    version than the tag it shipped under is confusing to report a bug against
+    and impossible to verify, so the spec now reads pyproject and this test
+    pins the remaining literal to it.
+    """
+    import tomllib
+
+    repo = Path(__file__).resolve().parent.parent
+    declared = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
+    project_version = declared["project"]["version"]
+
+    import socialmcp
+
+    assert socialmcp.__version__ == project_version, (
+        f"socialmcp.__version__ is {socialmcp.__version__} but pyproject says "
+        f"{project_version} — bump both, or the shipped app misreports itself"
+    )
+
+    spec = (repo / "packaging" / "macos" / "socialmcp.spec").read_text(encoding="utf-8")
+    assert 'version="0.1' not in spec and "CFBundleShortVersionString\": \"0.1" not in spec, (
+        "the PyInstaller spec has a hardcoded version again; it must read "
+        "pyproject.toml so the bundle cannot disagree with the release"
+    )
+    assert "VERSION" in spec
