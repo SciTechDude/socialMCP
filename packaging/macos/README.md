@@ -189,9 +189,17 @@ verifies without network access on first open.
 
 ```bash
 git tag -a v0.1.0 -m "SocialMCP 0.1.0" && git push origin v0.1.0
-gh release create v0.1.0 dist/SocialMCP-arm64.dmg dist/SocialMCP-x86_64.dmg \
-  --title "SocialMCP 0.1.0" --notes-file CHANGELOG-0.1.0.md
+gh release create v0.1.1 dist/SocialMCP-arm64.dmg \
+  --title "SocialMCP 0.1.1" --notes-file CHANGELOG-0.1.1.md --latest
 ```
 
-Mention in the release notes which file is for Apple Silicon and which for
-Intel. Most people do not know which Mac they have.
+**Never replace an asset on a published release.** Download counts live on the
+asset and reset, and the checksum in the notes stops matching what earlier
+downloaders have — which looks like tampering for a program that reads private
+data. Ship a new version instead.
+
+Apple Silicon only. Intel Macs are pointed at the `pipx`/`uv tool` install,
+which works there and needs no bundled interpreter. GitHub-hosted macOS
+runners are not usable for this repository — jobs are never allocated a runner
+and are cancelled after queueing for 24 hours — so builds and signing happen
+on a maintainer's Mac, which is where the certificate lives anyway.

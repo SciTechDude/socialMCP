@@ -75,21 +75,22 @@ error: no $TARGET_ARCH Python 3.11+ found on this Mac, so a $TARGET_ARCH build
        is not possible here. PyInstaller bundles the interpreter it runs under
        and cannot retarget one.
 
-  Three ways forward:
+  Two ways forward:
 
-  1. Let CI do it. .github/workflows/release.yml builds both architectures on
-     GitHub's own runners (macos-13 is Intel, macos-14+ is Apple Silicon) and
-     attaches both to the release. No local setup, and the recommended route.
+  1. Build on a Mac of that architecture, natively.
 
-  2. Build on a Mac of that architecture, natively.
-
-  3. Install a universal2 Python from python.org (3.11 or newer). It lands in
+  2. Install a universal2 Python from python.org (3.11 or newer). It lands in
      /Library/Frameworks and can run as $TARGET_ARCH under Rosetta, then:
          SOCIALMCP_CROSS_PYTHON=/usr/local/bin/python3.12 \\
            ./packaging/macos/build.sh --arch $TARGET_ARCH
 
   Note that the system /usr/bin/python3 does not work: it is 3.9 and is an
   xcrun stub that cannot run under Rosetta.
+
+  GitHub-hosted macOS runners are not an option: this repository is never
+  allocated one, so the jobs queue for 24 hours and are cancelled without
+  running a step. Releases are built and signed on a maintainer's Mac, which
+  is also where the signing certificate lives.
 EOF
         exit 1
     fi
@@ -187,8 +188,8 @@ if [[ "$ACTUAL_ARCH" != *"$TARGET_ARCH"* ]]; then
     echo "    WARNING: expected $TARGET_ARCH. Do not publish this file." >&2
     exit 1
 fi
-echo "    This file runs only on $TARGET_ARCH Macs. A release needs both;"
-echo "    see .github/workflows/release.yml."
+echo "    This file runs only on $TARGET_ARCH Macs. Intel users install from"
+echo "    the command line instead; see packaging/macos/README.md."
 if [[ "$SIGN" == "0" ]]; then
     cat <<'NOTE'
 
