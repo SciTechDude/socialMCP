@@ -6,9 +6,20 @@
 !.env.example
 *.token
 *token*.txt
+*password*
+*notary*
 *.pem
 *.key
 *.p12
+# Apple code-signing material. The private key and the Apple ID live outside
+# this repo (~/.socialmcp-signing/), sourced as env vars at build time; these
+# patterns are the second line of defence if one is ever copied in here.
+*.csr
+*.cer
+*.certSigningRequest
+*.provisionprofile
+*.mobileprovision
+signing.env
 secrets.*
 .secrets/
 .netrc
