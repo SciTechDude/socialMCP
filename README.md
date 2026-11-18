@@ -36,7 +36,7 @@ and opens the folder to drop your LinkedIn export into. No Python, no terminal.
 > | Your Mac | Download |
 > |---|---|
 > | Apple Silicon — M1, M2, M3, M4 | `SocialMCP-arm64.dmg` |
-> | Intel | *coming soon* — use the command-line install below |
+> | Intel | No app bundle — use the [command-line install](#get-it) below, which works on Intel today |
 >
 > Not sure?  menu → **About This Mac**. "Apple M*" means Apple Silicon;
 > "Intel Core" means Intel. Or run `uname -m` — `arm64` or `x86_64`.

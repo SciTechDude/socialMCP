@@ -44,8 +44,8 @@ up to 24 hours. Carry on with Step 2 while you wait.
    — **there are two files, and you need the right one:**
 
    - `SocialMCP-arm64.dmg` if your Mac has an **Apple** chip (M1, M2, M3, M4)
-   - **Intel Macs: coming soon.** For now, use the command-line install in the
-     box below — it works on Intel Macs today.
+   - **Intel Macs: use the command-line install** in the box below — that is
+     the supported route there, and it works today.
 
    Not sure which you have? Click the  menu in the top-left corner →
    **About This Mac**. If it says "Apple M" anything, the download is for you.
