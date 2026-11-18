@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -165,3 +165,31 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: pytest -q tests/test_privacy.py -v
+
+  # A single gate for branch protection to require.
+  #
+  # Requiring the matrix jobs by name means re-editing the protection rule
+  # every time the matrix changes — and worse, a rule that names a job which
+  # no longer exists is simply never satisfied, while newly added jobs are not
+  # required at all. Requiring only this job keeps the rule correct as the
+  # matrix evolves.
+  #
+  # `if: always()` plus the explicit result check is deliberate: without it a
+  # skipped or cancelled dependency would let this job report success.
+  ci:
+    name: CI passed
+    runs-on: ubuntu-latest
+    needs: [test, sdk-majors, clean-install, privacy]
+    if: always()
+    steps:
+      - name: Verify every job succeeded
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "upstream results: $results"
+          for result in $results; do
+            if [ "$result" != "success" ]; then
+              echo "::error::a required job did not succeed ($result)"
+              exit 1
+            fi
+          done
+          echo "all required jobs succeeded"

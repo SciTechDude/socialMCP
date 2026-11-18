@@ -40,17 +40,18 @@ up to 24 hours. Carry on with Step 2 while you wait.
 
 **On a Mac, this is one download.**
 
-1. [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases/latest)
+1. [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases)
    — **there are two files, and you need the right one:**
 
    - `SocialMCP-arm64.dmg` if your Mac has an **Apple** chip (M1, M2, M3, M4)
-   - `SocialMCP-x86_64.dmg` if your Mac has an **Intel** chip
+   - **Intel Macs: coming soon.** For now, use the command-line install in the
+     box below — it works on Intel Macs today.
 
    Not sure which you have? Click the  menu in the top-left corner →
-   **About This Mac**. If it says "Apple M" anything, use the first file.
+   **About This Mac**. If it says "Apple M" anything, the download is for you.
 
-   Downloading the wrong one is harmless — macOS will simply say the app is
-   damaged or cannot be opened. Delete it and get the other file.
+   If you do end up with a file for the wrong chip, nothing is broken — macOS
+   just says the app is damaged. Delete it and use the command-line install.
 2. Open the downloaded file and drag **SocialMCP** into your Applications folder.
 3. Double-click it.
 
@@ -58,25 +59,62 @@ That is the whole install. There is no Python to set up and no terminal to
 open — everything it needs is inside the app.
 
 <details>
-<summary>Windows, Linux, or if you would rather use the command line</summary>
+<summary><b>Windows</b></summary>
 
-You need **Python 3.11 or newer** (check with `python3 --version`; if it is
-missing or older, install it from [python.org/downloads](https://www.python.org/downloads/)
-and tick "Add Python to PATH" if Windows offers it).
+There is no Windows installer yet; the command line is the only route. It
+works, and it does not touch your system Python.
 
-Then install it in its own private environment, so nothing is added to the
-Python your system uses:
+1. **Install Python 3.11 or newer** from
+   [python.org/downloads](https://www.python.org/downloads/). On the first
+   installer screen, tick **"Add python.exe to PATH"** — if you miss it, the
+   commands below will not be found.
+
+2. Open **PowerShell** (press Start, type `powershell`, Enter) and run:
+
+   ```
+   py -m pip install --user pipx
+   py -m pipx ensurepath
+   ```
+
+   Close PowerShell and open it again, so the new commands are on your PATH.
+
+3. Install SocialMCP:
+
+   ```
+   pipx install https://github.com/SciTechDude/socialMCP/archive/refs/heads/main.zip
+   ```
+
+   (A `git+https://` URL also works, but only if you have Git installed —
+   Windows does not include it. The zip URL needs nothing extra.)
+
+4. Connect it and load your export:
+
+   ```
+   socialmcp setup
+   socialmcp drop
+   socialmcp ingest
+   ```
+
+`socialmcp setup` writes the config for Claude Desktop, Cursor, VS Code or
+Windsurf if you have them. `socialmcp drop` opens the folder in Explorer.
+
+If a command is not found, run `py -m pipx ensurepath` again and reopen
+PowerShell.
+
+</details>
+
+<details>
+<summary><b>Linux</b></summary>
 
 ```
-pip install --user pipx
-pipx install git+https://github.com/SciTechDude/socialMCP.git
+pipx install https://github.com/SciTechDude/socialMCP/archive/refs/heads/main.zip
+socialmcp setup && socialmcp drop && socialmcp ingest
 ```
 
-(If you already use `uv`: `uv tool install git+https://github.com/SciTechDude/socialMCP.git`.)
+Your distribution's `pipx` package works too (`apt install pipx`,
+`dnf install pipx`, `pacman -S python-pipx`). `socialmcp drop` uses
+`xdg-open`; if your setup has no file manager it just prints the path.
 
-Both commands keep SocialMCP and its dependencies in a folder of their own and
-make `socialmcp` available to type. Nothing else on your computer changes, and
-uninstalling removes all of it.
 </details>
 
 ## Step 3 — Connect it to your AI app
@@ -146,6 +184,34 @@ Now the good questions work:
 
 ---
 
+### "SocialMCP is damaged and can't be opened"
+
+This almost always means **the download does not match your Mac's chip** — an
+Apple Silicon build on an Intel Mac, or the reverse. Nothing is broken and
+nothing is actually damaged; macOS just reports it that way. Delete the file
+and use the command-line install above, which works on either chip.
+
+The app itself is **signed and notarized with Apple**, so it opens normally on
+any Mac — no security warning to dismiss, no Privacy & Security detour, and
+nothing to bypass. If you are ever told to strip a quarantine flag or click
+through a Gatekeeper warning to run SocialMCP, something is wrong: either the
+download is incomplete or it did not come from
+[the releases page](https://github.com/SciTechDude/socialMCP/releases).
+
+You can verify what you downloaded before opening it. This prints the signing
+identity and confirms Apple notarized that exact file:
+
+```
+spctl --assess --type open --context context:primary-signature -v ~/Downloads/SocialMCP-arm64.dmg
+```
+
+Expected output — anything else means do not open it:
+
+```
+accepted
+source=Notarized Developer ID
+```
+
 ## If something isn't working
 
 Type this. It checks everything and tells you exactly what to fix:
@@ -169,6 +235,7 @@ Common issues:
 
 | What you see | What to do |
 |---|---|
+| "SocialMCP is damaged" / won't open | Wrong chip — you have the Intel/Apple Silicon mismatch. See the section above. |
 | AI app doesn't show SocialMCP | Quit it **completely** and reopen. Config is only read at startup. |
 | "command not found: socialmcp" | Close and reopen your terminal so it picks up the new command. If you used `pipx`, run `pipx ensurepath` once. (Not needed at all if you installed the Mac app.) |
 | Searches feel too literal | Install [Ollama](https://ollama.com), then run `ollama pull nomic-embed-text` and `socialmcp reindex`. This adds meaning-based search and still runs entirely on your computer. |

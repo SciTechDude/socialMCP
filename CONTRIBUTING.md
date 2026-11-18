@@ -236,3 +236,15 @@ mismatches and `host.docker.internal` indirection that no real user
 encounters — a container would report Ollama as unreachable when it is fine.
 Use Docker only to check a clean Linux userspace; use a wheel in a fresh venv
 for everything else.
+
+## Branch protection
+
+`main` requires one status check: **CI passed**. It is an aggregating job that
+depends on every other job in `ci.yml`, so the protection rule stays correct as
+the matrix changes — requiring the matrix jobs by name means a rule that
+silently stops matching when a runner or Python version is added or removed.
+
+Force pushes and deletions of `main` are blocked. History rewriting on a
+feature branch is fine (and sometimes necessary — a build artifact committed by
+accident has to come out of history, not just out of the tree), but `main` is
+what everyone else has cloned.

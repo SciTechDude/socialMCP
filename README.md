@@ -26,7 +26,7 @@ Assistant:  7 people, 13-15 Oct. Four are still cold:
 
 ## Get it
 
-**Mac, no setup** — [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases/latest)
+**Mac, no setup** — [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases)
 → drag to Applications → double-click. It finds your AI app, connects itself,
 and opens the folder to drop your LinkedIn export into. No Python, no terminal.
 
@@ -36,7 +36,7 @@ and opens the folder to drop your LinkedIn export into. No Python, no terminal.
 > | Your Mac | Download |
 > |---|---|
 > | Apple Silicon — M1, M2, M3, M4 | `SocialMCP-arm64.dmg` |
-> | Intel | `SocialMCP-x86_64.dmg` |
+> | Intel | *coming soon* — use the command-line install below |
 >
 > Not sure?  menu → **About This Mac**. "Apple M*" means Apple Silicon;
 > "Intel Core" means Intel. Or run `uname -m` — `arm64` or `x86_64`.
@@ -44,14 +44,34 @@ and opens the folder to drop your LinkedIn export into. No Python, no terminal.
 > If you pick wrong, macOS reports that the app is damaged or cannot be opened.
 > Nothing is broken: delete it and download the other file.
 
+The download is **signed with an Apple Developer ID and notarized by Apple**,
+so it opens by double-clicking with no security warning to click through. You
+never need to bypass Gatekeeper or strip a quarantine flag to run it — if any
+instructions tell you to, treat that as a sign the file did not come from
+[the releases page](https://github.com/SciTechDude/socialMCP/releases). To
+check a download yourself before opening it:
+
+```bash
+spctl --assess --type open --context context:primary-signature -v SocialMCP-arm64.dmg
+# accepted
+# source=Notarized Developer ID
+```
+
+That matters more here than for most apps: this one reads your entire
+professional network, so being able to confirm who built the binary — and that
+Apple scanned it — is part of the point.
+
 Then: [**5-minute quick start**](QUICKSTART.md) · [What it can do](#what-you-can-do-with-it)
 
-**Any platform, from the command line** — installed into its own isolated
-environment, never into your system Python:
+**Windows, Linux, or any Mac** — from the command line, installed into its own
+isolated environment and never into your system Python. There is no Windows or
+Linux installer; this is the supported route there, and
+[QUICKSTART.md](QUICKSTART.md) has step-by-step instructions for each:
 
 ```bash
 uv tool install git+https://github.com/SciTechDude/socialMCP.git
-# or: pipx install git+https://github.com/SciTechDude/socialMCP.git
+# no Git installed (common on Windows)? use the zip instead:
+# pipx install https://github.com/SciTechDude/socialMCP/archive/refs/heads/main.zip
 
 socialmcp setup        # connects the MCP clients you have installed
 socialmcp drop         # opens the folder for your export

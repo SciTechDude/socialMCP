@@ -153,7 +153,11 @@ def extract_archive(zip_path: Path, dest: Path) -> None:
                 raise IngestError(f"unsafe path in archive: {name!r}")
 
             target = (dest / name).resolve()
-            if not str(target).startswith(str(dest) + "/") and target != dest:
+            # Compared as paths, not strings. A string prefix check has to pick
+            # a separator, and hardcoding "/" rejected every member on Windows,
+            # where the resolved path uses backslashes — so no archive could be
+            # read at all on that platform.
+            if not target.is_relative_to(dest):
                 raise IngestError(f"archive member escapes extraction directory: {name!r}")
 
             total += info.file_size

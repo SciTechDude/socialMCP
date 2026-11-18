@@ -367,3 +367,34 @@ def test_a_resent_invitation_clears_a_previous_lapse(
     shutil.copytree(linkedin_dir, third)
     ingest_path(db, config, third)
     assert db.scalar("SELECT invite_lapsed_at FROM contacts WHERE full_name='Rafael Santos'") is None
+
+
+def test_extraction_accepts_normal_members_on_any_platform(tmp_path: Path):
+    """Regression: the escape check must not depend on the path separator.
+
+    The original check compared `str(target).startswith(str(dest) + "/")`,
+    which on Windows never matches because resolved paths use backslashes. The
+    result was that every member of every archive was rejected as a traversal
+    attempt, so ingestion was completely broken on that platform while passing
+    every test on macOS and Linux.
+    """
+    archive = tmp_path / "ok.zip"
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("Connections.csv", "First Name,Last Name\nA,B\n")
+        z.writestr("nested/dir/messages.csv", "CONVERSATION ID\n1\n")
+
+    out = tmp_path / "out"
+    extract_archive(archive, out)
+
+    assert (out / "Connections.csv").is_file()
+    assert (out / "nested" / "dir" / "messages.csv").is_file()
+
+
+def test_extraction_still_rejects_real_escapes(tmp_path: Path):
+    """The portable check must not have loosened the protection it replaced."""
+    for bad_name in ("../escaped.txt", "a/../../escaped.txt", "/abs/escaped.txt"):
+        archive = tmp_path / "evil.zip"
+        with zipfile.ZipFile(archive, "w") as z:
+            z.writestr(bad_name, "nope")
+        with pytest.raises(IngestError):
+            extract_archive(archive, tmp_path / f"out-{abs(hash(bad_name))}")

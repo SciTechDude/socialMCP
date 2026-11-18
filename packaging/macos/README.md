@@ -58,10 +58,13 @@ This is worth doing properly — the two most serious bugs in this project were
 both found by running it somewhere other than the development machine.
 
 1. Copy the `.dmg` across, drag the app to Applications, double-click it.
-2. **Unsigned builds will be refused** with *"cannot be opened because the
-   developer cannot be verified."* That is exactly what a user would see. To
-   continue testing: right-click the app → **Open**, or
-   `xattr -dr com.apple.quarantine /Applications/SocialMCP.app`.
+2. **Unsigned builds will be refused.** That is exactly what a user would see.
+   To continue testing, use **System Settings → Privacy & Security → Open
+   Anyway**. Apple removed the Control-click → Open shortcut in macOS 15, so
+   instructions that rely on it are wrong on current systems. From a terminal,
+   `xattr -dr com.apple.quarantine /Applications/SocialMCP.app` also works, but
+   do not put that in user-facing documentation — teaching people to strip
+   quarantine flags is worse than the problem it solves.
 3. Check the setup dialog names the AI apps actually installed on that machine.
 4. Drop a LinkedIn export in the folder it opens, then restart the AI app and
    ask it something.
@@ -80,25 +83,94 @@ shell's `PATH` or `PYTHONPATH` fails here rather than on a user's machine.
 ## Signing and notarization
 
 Unsigned builds are fine locally and unusable for distribution. You need an
-Apple Developer account ($99/year).
+Apple Developer account ($99/year), which covers unlimited apps and
+notarizations — there is no per-app or per-build fee.
 
-One-time setup:
+One-time setup, in order. Each step has a way to go wrong that produces a
+confusing error later, so they are spelled out:
+
+1. **Create a `Developer ID Application` certificate.** Not "Developer ID
+   Installer" (that signs `.pkg` files only), and not any "Apple
+   Development"/"Distribution" type (those are for the App Store). Without
+   full Xcode there is no "Manage Certificates" button, so generate a CSR
+   yourself and upload it to the developer portal:
+
+   ```bash
+   openssl req -new -newkey rsa:2048 -nodes \
+     -keyout developerID-app.key -out developerID-app.csr \
+     -subj "/emailAddress=you@example.com/CN=Your Name/C=US"
+   ```
+
+   Apple issues **one certificate per CSR** — a second certificate needs a
+   second CSR and its own key. Keep each key beside its certificate; a
+   certificate without its private key cannot sign anything.
+
+2. **Import the certificate and key** into the login keychain. `security`
+   cannot read a PKCS#8 PEM key, so bundle them as a PKCS#12 first, and note
+   that OpenSSL 3 defaults to a cipher Keychain rejects — `-legacy` is
+   required:
+
+   ```bash
+   openssl pkcs12 -export -legacy -inkey developerID-app.key \
+     -in developerID_application.cer -out bundle.p12 -passout pass:"$PASS"
+   security import bundle.p12 -k ~/Library/Keychains/login.keychain-db \
+     -P "$PASS" -T /usr/bin/codesign
+   rm bundle.p12
+   ```
+
+3. **Import Apple's G2 intermediate CA** if `security find-identity -v -p
+   codesigning` reports `0 valid identities found` while
+   `security find-identity -p codesigning` lists yours. That combination means
+   the certificate is present but macOS cannot build its chain, which happens
+   on a Mac with Command Line Tools and no Xcode. The CA URL is inside your own
+   certificate, so read it rather than guessing:
+
+   ```bash
+   openssl x509 -inform DER -in developerID_application.cer -noout -text |
+     grep -A2 "Authority Information Access"     # → http://certs.apple.com/devidg2.der
+   curl -fsSLO http://certs.apple.com/devidg2.der
+   security import devidg2.der -k ~/Library/Keychains/login.keychain-db
+   ```
+
+4. **Store notary credentials.** The password must be an *app-specific*
+   password from appleid.apple.com, never the Apple ID password — the real one
+   returns `HTTP 401 Invalid credentials`. Omitting `--password` makes it
+   prompt, which keeps the secret out of shell history. Note that changing your
+   Apple ID password revokes every app-specific password you have generated.
+
+   ```bash
+   xcrun notarytool store-credentials socialmcp-notary \
+     --apple-id you@example.com --team-id TEAMID
+   ```
+
+Keep the signing values in a file **outside this repository** so no `git add`
+can reach them, and source it per release:
 
 ```bash
-# After creating a "Developer ID Application" certificate in Xcode or the
-# developer portal, store notary credentials in the keychain:
-xcrun notarytool store-credentials socialmcp-notary \
-  --apple-id you@example.com --team-id TEAMID \
-  --password <app-specific-password>     # appleid.apple.com, not your login
-```
-
-Then for each release:
-
-```bash
+# ~/.socialmcp-signing/signing.env  (chmod 600, dir chmod 700)
 export SOCIALMCP_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export SOCIALMCP_NOTARY_PROFILE="socialmcp-notary"
+```
+
+```bash
+source ~/.socialmcp-signing/signing.env
 ./packaging/macos/build.sh --sign
 ```
+
+`SOCIALMCP_SIGN_IDENTITY` must match `security find-identity -v -p codesigning`
+exactly, byte for byte. `tests/test_privacy.py` enforces that none of these
+values, nor an app-specific password, can be committed — including a check
+against git history, because deleting a leaked credential in a later commit
+does not unpublish it.
+
+The first `codesign` run prompts for your **login keychain password** (your
+macOS account password) to authorize access to the key. Choose **Always
+Allow**, or every nested library on every build asks again.
+
+Certificates are issued for about a year. Expiry does not break builds you
+have already shipped: `--timestamp` proves the signature predated expiry and
+notarization tickets do not lapse. **Never revoke a certificate you released
+with** — revocation *is* retroactive and breaks every copy already downloaded.
 
 The script signs nested libraries first and the app last (`--deep` is
 deprecated and unreliable), notarizes the `.dmg`, then staples the ticket so it

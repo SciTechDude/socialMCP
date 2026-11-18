@@ -54,10 +54,13 @@ def test_explicit_archive_dir_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 
 def test_toml_values_and_nested_sections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     toml = tmp_path / "socialmcp.toml"
+    # Single-quoted TOML literal strings take the path verbatim. In a
+    # double-quoted basic string a Windows path turns "\Users" into an invalid
+    # escape sequence and the file fails to parse.
     toml.write_text(
         f"""
-        home = "{tmp_path / 'h'}"
-        drop_dir = "{tmp_path / 'd'}"
+        home = '{tmp_path / 'h'}'
+        drop_dir = '{tmp_path / 'd'}'
         auto_ingest = false
         max_results = 7
 
