@@ -4,11 +4,23 @@ This project's entire premise is that your network stays on your machine, so
 these tests treat "could this be committed?" as a correctness property rather
 than a matter of discipline. They run against the real repository and the real
 .gitignore, so they fail if someone loosens an ignore rule.
+
+The last section covers Apple code-signing material, which is a distinct
+hazard: signing a release build pulls a certificate, a private key, an Apple
+ID and an app-specific password onto the machine *while* someone is iterating
+on the build script — which is exactly when `git add -A` gets typed. Those
+tests work in two layers, because either alone is insufficient: pattern rules
+that run everywhere including CI, and a search for the real values read from
+the local signing env file. The real values are never written into this file —
+hardcoding the Team ID to test for it would commit the string the test exists
+to keep out.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 import subprocess
 from pathlib import Path
 
@@ -47,6 +59,21 @@ MUST_BE_IGNORED = [
     "server.pem",
     "secrets.json",
     ".netrc",
+    # Apple code-signing material, under every name the portal and Apple's
+    # tooling actually produce. Paths rather than extensions, because the
+    # mistake is always a specific file in a specific place.
+    "developerID.csr",
+    "developerID.cer",
+    "developerID.key",
+    "CertificateSigningRequest.certSigningRequest",
+    "signing.env",
+    ".env.signing",
+    "DeveloperIDApplication.p12",
+    "packaging/macos/certificate.p12",
+    "packaging/macos/signing.env",
+    "embedded.provisionprofile",
+    "profile.mobileprovision",
+    "apple-notary-password.txt",
 ]
 
 # Files that MUST stay committable, so the ignore rules are not over-broad.
@@ -76,9 +103,34 @@ SECRET_PATTERNS = {
     "Slack token": re.compile(r"\bxox[abpsr]-[A-Za-z0-9-]{10,}"),
 }
 
+# Apple distribution credentials. Separate from SECRET_PATTERNS because the
+# signing tests below check these against build.sh and the CI workflows too,
+# not only against tracked files. Placeholder forms used in documentation are
+# allowed through by design — the docs have to show the shape of the command.
+APPLE_SECRET_PATTERNS = {
+    # Apple app-specific passwords are four lowercase groups of four letters.
+    "Apple app-specific password": re.compile(r"\b[a-z]{4}(?:-[a-z]{4}){3}\b"),
+    # A concrete signing identity: real Team IDs are ten characters.
+    "real signing identity": re.compile(
+        r"Developer ID (?:Application|Installer):[^\n(]*"
+        r"\((?!TEAMID|YOUR_TEAM_ID|XXXXXXXXXX)[A-Z0-9]{10}\)"
+    ),
+    # notarytool / altool invocations carrying a literal rather than a
+    # variable reference or a documented `<placeholder>`.
+    "literal --team-id": re.compile(
+        r"--team-id[= ]+(?!TEAMID|\$|[\"']\$|<)[A-Z0-9]{10}\b"
+    ),
+    "literal --password": re.compile(
+        r"--password[= ]+(?![\"']?\$|<|@keychain:|@env:)[^\s\\]{6,}"
+    ),
+    "literal --apple-id": re.compile(
+        r"--apple-id[= ]+(?!\$|[\"']\$|<)[\w.+-]+@(?!example\.(?:com|org|net))[\w.-]+"
+    ),
+}
+
 TEXT_SUFFIXES = {
     ".py", ".md", ".toml", ".sql", ".csv", ".json", ".txt", ".yml", ".yaml",
-    ".cfg", ".ini", ".sh", ".js", ".ts", ".gitignore", "",
+    ".cfg", ".ini", ".sh", ".js", ".ts", ".plist", ".spec", ".gitignore", "",
 }
 
 
@@ -319,3 +371,218 @@ def test_every_venv_shape_is_ignored(path: str):
         check=False,
     )
     assert result.returncode == 0, f"{path!r} would be committable"
+
+
+# ---------------------------------------------------------------------------
+# Apple code-signing credentials
+# ---------------------------------------------------------------------------
+
+# The signing material lives outside the repository on purpose: a path that is
+# not in the working tree cannot be reached by a careless `git add`, whatever
+# .gitignore says. Overridable so another machine can keep it elsewhere.
+SIGNING_DIR = Path(
+    os.environ.get("SOCIALMCP_SIGNING_DIR", Path.home() / ".socialmcp-signing")
+)
+SIGNING_ENV = SIGNING_DIR / "signing.env"
+
+# Variables whose values are account identifiers or credentials. The notary
+# profile name and the word "Developer ID Application" are deliberately not
+# here: they are not secrets, and treating them as such would fail on the
+# project's own documentation.
+SECRET_ENV_VARS = ("SOCIALMCP_TEAM_ID", "SOCIALMCP_APPLE_ID")
+
+ENV_ASSIGNMENT = re.compile(
+    r"^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*[\"']?([^\"'\n#]*)", re.MULTILINE
+)
+
+
+def local_secret_values() -> dict[str, str]:
+    """Real signing values from this machine, if it has any.
+
+    Absent on CI and in a fresh clone, so the tests using this skip rather
+    than fail; the pattern layer is what runs everywhere.
+    """
+    values: dict[str, str] = {}
+    if SIGNING_ENV.is_file():
+        text = SIGNING_ENV.read_text(encoding="utf-8", errors="ignore")
+        for name, value in ENV_ASSIGNMENT.findall(text):
+            value = value.strip()
+            if (
+                name in SECRET_ENV_VARS
+                and len(value) >= 6
+                and "CHANGEME" not in value.upper()
+                and "example.com" not in value.lower()
+            ):
+                values[name] = value
+    # An exported value wins: a shell that has sourced the file is the state
+    # the signed build actually runs in.
+    for name in SECRET_ENV_VARS:
+        from_env = os.environ.get(name, "").strip()
+        if len(from_env) >= 6 and "CHANGEME" not in from_env.upper():
+            values[name] = from_env
+    return values
+
+
+@requires_git
+def test_no_apple_signing_artifact_is_tracked():
+    """Ignore rules are irrelevant for a file already added with `git add -f`."""
+    tracked = git("ls-files").splitlines()
+    if not tracked:
+        pytest.skip("nothing committed yet")
+    suffixes = (
+        ".cer", ".csr", ".certsigningrequest", ".p12", ".pfx", ".key", ".pem",
+        ".p8", ".provisionprofile", ".mobileprovision", ".keychain",
+    )
+    offenders = [p for p in tracked if p.lower().endswith(suffixes)]
+    assert not offenders, f"signing material is tracked: {offenders}"
+
+
+@requires_git
+def test_no_tracked_file_contains_apple_signing_credentials():
+    files = [p for p in tracked_text_files() if p.name != Path(__file__).name]
+    if not files:
+        pytest.skip("nothing committed yet")
+
+    findings: list[str] = []
+    for path in files:
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        for label, pattern in APPLE_SECRET_PATTERNS.items():
+            match = pattern.search(content)
+            if match:
+                # Location and kind only — never the matched text.
+                line = content[: match.start()].count("\n") + 1
+                findings.append(f"{path.relative_to(REPO)}:{line} ({label})")
+    assert not findings, f"Apple signing credentials in tracked files: {findings}"
+
+
+@requires_git
+def test_real_signing_values_are_absent_from_tracked_files():
+    """The specific failure: a Team ID or Apple ID pasted in "just to test"."""
+    secrets = local_secret_values()
+    if not secrets:
+        pytest.skip("no local signing env file; the pattern tests cover this")
+
+    findings: list[str] = []
+    for path in tracked_text_files():
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        for name, value in secrets.items():
+            index = content.find(value)
+            if index != -1:
+                findings.append(
+                    f"{path.relative_to(REPO)}:{content[:index].count(chr(10)) + 1} ({name})"
+                )
+    assert not findings, (
+        "the real value of a signing variable appears in a committed file — "
+        f"keep it in {SIGNING_ENV.name} and reference the env var: {findings}"
+    )
+
+
+@requires_git
+def test_real_signing_values_were_never_committed_in_any_revision():
+    """Deleting a leaked value in a later commit does not unpublish it.
+
+    Once pushed, every revision stays retrievable from GitHub, so the only
+    safe property is that the string never entered history at all. `git log -S`
+    (the pickaxe) searches content across all revisions rather than just the
+    current tree.
+    """
+    secrets = local_secret_values()
+    if not secrets:
+        pytest.skip("no local signing env file; the pattern tests cover this")
+    if not git("rev-parse", "--quiet", "--verify", "HEAD").strip():
+        pytest.skip("no commits yet")
+
+    findings: list[str] = []
+    for name, value in secrets.items():
+        hits = subprocess.run(
+            ["git", "log", "--all", "--oneline", "-S", value, "--"],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        ).stdout.strip()
+        if hits:
+            findings.append(
+                f"{name} in commits: {[line.split()[0] for line in hits.splitlines()]}"
+            )
+    assert not findings, (
+        "a signing credential is in git history and must be treated as "
+        f"compromised — rotate it, do not merely delete it: {findings}"
+    )
+
+
+def test_build_script_notarizes_through_the_keychain_not_a_password():
+    """`notarytool --password` on a command line is the mistake prevented here.
+
+    It lands in shell history, in CI logs and in the process table. The
+    keychain profile exists so the password is typed once, by a human, into
+    `store-credentials`.
+    """
+    script = (REPO / "packaging" / "macos" / "build.sh").read_text(encoding="utf-8")
+    submit_lines = [
+        ln for ln in script.splitlines() if "notarytool" in ln and "submit" in ln
+    ]
+    assert submit_lines, "build.sh no longer submits for notarization"
+    for line in submit_lines:
+        assert "--keychain-profile" in line, (
+            "notarytool submit must authenticate with --keychain-profile: " + line
+        )
+        assert "--password" not in line, (
+            "a password on the notarytool command line leaks into shell history, "
+            "CI logs and the process table: " + line
+        )
+
+
+def test_build_script_takes_signing_config_from_the_environment():
+    """No identity, Team ID or Apple ID may be baked into the build script."""
+    script = (REPO / "packaging" / "macos" / "build.sh").read_text(encoding="utf-8")
+    assert "SOCIALMCP_SIGN_IDENTITY" in script
+    assert "SOCIALMCP_NOTARY_PROFILE" in script
+    for label, pattern in APPLE_SECRET_PATTERNS.items():
+        assert not pattern.search(script), f"build.sh contains {label}"
+
+
+@pytest.mark.parametrize("workflow", ["ci.yml", "release.yml"])
+def test_workflows_never_inline_apple_credentials(workflow: str):
+    """A workflow file on a public repo is published the instant it is pushed.
+
+    If CI ever signs, it must read from `${{ secrets.* }}` — including the
+    certificate, which reaches CI as a base64 .p12 and must never be a literal.
+    """
+    path = REPO / ".github" / "workflows" / workflow
+    if not path.is_file():
+        pytest.skip(f"{workflow} not present")
+    content = path.read_text(encoding="utf-8")
+    for label, pattern in APPLE_SECRET_PATTERNS.items():
+        assert not pattern.search(content), f"{workflow} contains {label}"
+    for prologue in ("MIIK", "MIIJ"):  # base64 PKCS#12 / DER
+        assert prologue not in content, (
+            f"{workflow} appears to embed a certificate blob; use a secret"
+        )
+
+
+def test_signing_directory_is_outside_the_repository():
+    """Nothing .gitignore can do is as strong as the file not being here."""
+    resolved = SIGNING_DIR.resolve()
+    assert resolved != REPO and REPO not in resolved.parents, (
+        f"signing material at {SIGNING_DIR} is inside the working tree; move it "
+        "out so no git command can reach it"
+    )
+
+
+@pytest.mark.skipif(not SIGNING_ENV.is_file(), reason="no local signing env file")
+def test_local_signing_material_is_not_world_readable():
+    """On a shared or backed-up machine, mode matters as much as location."""
+    offenders = []
+    for path in [SIGNING_DIR, *SIGNING_DIR.iterdir()]:
+        mode = path.stat().st_mode
+        # The CSR and the certificate are public; keys and env are not.
+        if path.is_file() and path.suffix in {".csr", ".cer"}:
+            continue
+        if mode & (stat.S_IRGRP | stat.S_IROTH):
+            offenders.append(f"{path.name} is mode {stat.S_IMODE(mode):o}")
+    assert not offenders, (
+        f"signing material is readable beyond your account: {offenders} — "
+        "chmod 700 the directory and 600 the files"
+    )

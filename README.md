@@ -44,6 +44,23 @@ and opens the folder to drop your LinkedIn export into. No Python, no terminal.
 > If you pick wrong, macOS reports that the app is damaged or cannot be opened.
 > Nothing is broken: delete it and download the other file.
 
+The download is **signed with an Apple Developer ID and notarized by Apple**,
+so it opens by double-clicking with no security warning to click through. You
+never need to bypass Gatekeeper or strip a quarantine flag to run it — if any
+instructions tell you to, treat that as a sign the file did not come from
+[the releases page](https://github.com/SciTechDude/socialMCP/releases). To
+check a download yourself before opening it:
+
+```bash
+spctl --assess --type open --context context:primary-signature -v SocialMCP-arm64.dmg
+# accepted
+# source=Notarized Developer ID
+```
+
+That matters more here than for most apps: this one reads your entire
+professional network, so being able to confirm who built the binary — and that
+Apple scanned it — is part of the point.
+
 Then: [**5-minute quick start**](QUICKSTART.md) · [What it can do](#what-you-can-do-with-it)
 
 **Windows, Linux, or any Mac** — from the command line, installed into its own
