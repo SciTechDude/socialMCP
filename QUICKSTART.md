@@ -184,33 +184,32 @@ Now the good questions work:
 
 ---
 
-### "SocialMCP cannot be opened"
+### "SocialMCP is damaged and can't be opened"
 
-The app is not code-signed yet, so macOS blocks it on first open. Nothing is
-wrong with the download — macOS blocks every app from a developer who has not
-paid Apple's registration fee, regardless of what the app does.
+This almost always means **the download does not match your Mac's chip** — an
+Apple Silicon build on an Intel Mac, or the reverse. Nothing is broken and
+nothing is actually damaged; macOS just reports it that way. Delete the file
+and use the command-line install above, which works on either chip.
 
-To open it anyway:
+The app itself is **signed and notarized with Apple**, so it opens normally on
+any Mac — no security warning to dismiss, no Privacy & Security detour, and
+nothing to bypass. If you are ever told to strip a quarantine flag or click
+through a Gatekeeper warning to run SocialMCP, something is wrong: either the
+download is incomplete or it did not come from
+[the releases page](https://github.com/SciTechDude/socialMCP/releases).
 
-1. Double-click **SocialMCP**. macOS refuses and shows a warning. Dismiss it.
-2. Open **System Settings → Privacy & Security**.
-3. Scroll to the **Security** section. There is a line saying *"SocialMCP was
-   blocked to protect your Mac"* with an **Open Anyway** button. Click it.
-4. Confirm with Touch ID or your password, then open the app again.
-
-On macOS 14 and earlier you can instead Control-click the app and choose
-**Open**. Apple removed that shortcut in macOS 15.
-
-You only do this once.
-
-**If you would rather not bypass a security warning** — which is a reasonable
-instinct for an app that reads your contacts — install from the command line
-instead. It is the same software, it is not subject to Gatekeeper, and it needs
-no approval step:
+You can verify what you downloaded before opening it. This prints the signing
+identity and confirms Apple notarized that exact file:
 
 ```
-uv tool install git+https://github.com/SciTechDude/socialMCP.git
-socialmcp setup
+spctl --assess --type open --context context:primary-signature -v ~/Downloads/SocialMCP-arm64.dmg
+```
+
+Expected output — anything else means do not open it:
+
+```
+accepted
+source=Notarized Developer ID
 ```
 
 ## If something isn't working
@@ -236,7 +235,7 @@ Common issues:
 
 | What you see | What to do |
 |---|---|
-| "SocialMCP cannot be opened" / "damaged" | Not signed yet — see the section above. |
+| "SocialMCP is damaged" / won't open | Wrong chip — you have the Intel/Apple Silicon mismatch. See the section above. |
 | AI app doesn't show SocialMCP | Quit it **completely** and reopen. Config is only read at startup. |
 | "command not found: socialmcp" | Close and reopen your terminal so it picks up the new command. If you used `pipx`, run `pipx ensurepath` once. (Not needed at all if you installed the Mac app.) |
 | Searches feel too literal | Install [Ollama](https://ollama.com), then run `ollama pull nomic-embed-text` and `socialmcp reindex`. This adds meaning-based search and still runs entirely on your computer. |
