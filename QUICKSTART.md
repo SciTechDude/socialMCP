@@ -241,6 +241,22 @@ Common issues:
 | Searches feel too literal | Install [Ollama](https://ollama.com), then run `ollama pull nomic-embed-text` and `socialmcp reindex`. This adds meaning-based search and still runs entirely on your computer. |
 | "no adapter recognized" | You unzipped the file, or it isn't a LinkedIn archive. Use the original `.zip` as downloaded. |
 
+### Still stuck? Please say so
+
+Nothing about your use of SocialMCP is reported back — no telemetry, no
+analytics, no crash reports. That is deliberate, and it means a problem you
+don't mention is a problem nobody knows about.
+
+[**Open an issue**](https://github.com/SciTechDude/socialMCP/issues), even a
+one-line one. "The app wouldn't open on my MacBook Air" is genuinely useful.
+LinkedIn changes its export format from time to time, so "it said no adapter
+recognized and my export is from this month" is the most valuable report there
+is.
+
+Paste the output of `socialmcp doctor` if you like — it lists counts and
+statuses only, never names. **Don't paste your export, your database, or a
+screenshot with real people in it.**
+
 ---
 
 ## Removing it

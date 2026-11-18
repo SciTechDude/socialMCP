@@ -86,6 +86,29 @@ systems is the one the OS relies on.
 Requires Python 3.11+. Linux and Windows are supported this way; the Mac app is
 the same software with its own interpreter inside.
 
+## Tell me what broke
+
+This is new, and **SocialMCP collects nothing** — no telemetry, no analytics,
+no crash reports. That is the point, and it also means I have no idea whether
+it worked for you. A download count is the only thing I can see, and it cannot
+tell the difference between "works beautifully" and "crashed on launch".
+
+So if anything failed, confused you, or parsed your export wrong, please
+[open an issue](https://github.com/SciTechDude/socialMCP/issues) — even a
+one-liner. Especially worth reporting:
+
+- it would not install, or the app would not open
+- your export parsed but something came out wrong — a missing person, a wrong
+  date, an event that should have been one cluster and came out as three
+- your AI client could not see it after `socialmcp setup`
+- an export vintage this does not understand (LinkedIn changes the CSVs
+  periodically, and that is exactly the kind of thing I cannot discover alone)
+
+**Never paste your export, your database, or a screenshot with real names.**
+`socialmcp doctor` output is safe to share — it reports counts and statuses,
+never contact data. Describe the shape of the problem and I can usually
+reproduce it from the synthetic fixtures.
+
 ## Why this exists
 
 Networking at a fast-paced event creates a memory gap: three days later you have
