@@ -99,11 +99,18 @@ EOF
 fi
 
 APP="dist/$TARGET_ARCH/SocialMCP.app"
+VERSION="$(python3 -c 'import tomllib,pathlib;print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
 # The filename carries the architecture because one bundle cannot serve both:
 # universal2 requires every bundled binary to be fat, and some dependencies
 # publish single-arch wheels only.
-DMG="dist/SocialMCP-${TARGET_ARCH}.dmg"
-VERSION="$(python3 -c 'import tomllib,pathlib;print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+#
+# It carries the version so that uploading a new release cannot overwrite an
+# older asset — different names, nothing to clobber. Replacing a published
+# asset resets its download count and breaks the checksum in its release
+# notes, which for software that reads private contact data looks exactly like
+# tampering. It also means a user with two downloads can tell them apart, and
+# a bug report that names the file names its version.
+DMG="dist/SocialMCP-${VERSION}-${TARGET_ARCH}.dmg"
 
 echo "==> Building SocialMCP $VERSION"
 

@@ -43,7 +43,9 @@ up to 24 hours. Carry on with Step 2 while you wait.
 1. [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases)
    — **there are two files, and you need the right one:**
 
-   - `SocialMCP-arm64.dmg` if your Mac has an **Apple** chip (M1, M2, M3, M4)
+   - the file ending **`-arm64.dmg`** if your Mac has an **Apple** chip (M1,
+     M2, M3, M4). The name also carries the version, so it looks like
+     `SocialMCP-0.1.1-arm64.dmg`
    - **Intel Macs: use the command-line install** in the box below — that is
      the supported route there, and it works today.
 
@@ -202,7 +204,7 @@ You can verify what you downloaded before opening it. This prints the signing
 identity and confirms Apple notarized that exact file:
 
 ```
-spctl --assess --type open --context context:primary-signature -v ~/Downloads/SocialMCP-arm64.dmg
+spctl --assess --type open --context context:primary-signature -v ~/Downloads/SocialMCP-*.dmg
 ```
 
 Expected output — anything else means do not open it:

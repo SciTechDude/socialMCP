@@ -34,6 +34,7 @@ class Check:
 
 def run_checks(config: Config) -> list[Check]:
     checks: list[Check] = []
+    checks.append(_version_check())
     checks.append(_python_check())
     checks.append(_fts_check())
     checks.append(_vector_check())
@@ -41,6 +42,19 @@ def run_checks(config: Config) -> list[Check]:
     checks.extend(_data_checks(config))
     checks.extend(_client_checks())
     return checks
+
+
+def _version_check() -> Check:
+    """Which version this is — first line, because it is the first question.
+
+    There is no telemetry, so a problem report is all anyone gets to see. Doctor
+    output is the one thing users are asked to paste and the only thing safe to
+    paste, so the version belongs here rather than behind a separate flag that
+    nobody runs. Covers every install route: dmg, pipx, uv tool, source.
+    """
+    from . import __version__
+
+    return Check("SocialMCP version", OK, __version__)
 
 
 def _python_check() -> Check:

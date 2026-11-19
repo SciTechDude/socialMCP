@@ -351,6 +351,7 @@ def test_no_virtualenv_or_build_artifact_is_tracked():
         "venv",
         "venv-3.12",
         "dist/SocialMCP-arm64.dmg",
+        "dist/SocialMCP-0.1.1-arm64.dmg",
         "build/arm64/anything",
     ],
 )

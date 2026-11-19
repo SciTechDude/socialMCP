@@ -276,3 +276,22 @@ def test_version_is_declared_in_exactly_one_place():
         "pyproject.toml so the bundle cannot disagree with the release"
     )
     assert "VERSION" in spec
+
+
+def test_dmg_filename_carries_the_version_and_architecture():
+    """The release asset name must be unique per version.
+
+    Uploading a dmg whose name matches an existing release asset is how a
+    published artifact gets replaced — which resets its download count and
+    invalidates the checksum printed in its release notes. Different names per
+    version make that collision impossible, so the naming scheme is a release
+    safety property, not cosmetics.
+    """
+    script = (
+        Path(__file__).resolve().parent.parent / "packaging" / "macos" / "build.sh"
+    ).read_text(encoding="utf-8")
+    assignment = [ln for ln in script.splitlines() if ln.startswith("DMG=")]
+    assert assignment, "build.sh no longer defines DMG"
+    line = assignment[0]
+    assert "${VERSION}" in line, f"dmg name must include the version: {line}"
+    assert "${TARGET_ARCH}" in line, f"dmg name must include the architecture: {line}"
