@@ -35,6 +35,11 @@ datas = [
 binaries = collect_dynamic_libs("sqlite_vec")
 
 hiddenimports = [
+    # The first-launch progress window. Imported by name from app_main, which
+    # PyInstaller's analysis of a sibling module does not always follow.
+    "progress",
+    "tkinter",
+    "tkinter.ttk",
     # Adapters are imported by name from a registry, so nothing references them
     # statically and PyInstaller would otherwise leave them out.
     "socialmcp.adapters.linkedin",
@@ -56,9 +61,14 @@ analysis = Analysis(  # noqa: F821
     hookspath=[],
     runtime_hooks=[],
     excludes=[
-        # Nothing here needs a GUI toolkit or scientific stack; excluding them
-        # keeps the bundle to a size people will actually download.
-        "tkinter",
+        # No scientific stack; excluding it keeps the bundle to a size people
+        # will actually download.
+        #
+        # tkinter is NOT excluded, despite the size: first launch needs a
+        # progress window before any slow work, because a double-click that
+        # shows nothing reads as broken and a macOS permission prompt from an
+        # app that has not introduced itself reads as suspicious. See
+        # packaging/macos/progress.py.
         "numpy",
         "pandas",
         "matplotlib",

@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 # A bundled app inherits almost no environment: launched from Finder there is
 # no shell, no PATH to speak of, and no working directory the user chose. Pin
@@ -165,19 +166,21 @@ def build_setup_report(results, drop_folder: Path, *, embeddings: bool) -> tuple
     return "\n".join(lines), tuple(buttons)
 
 
-def setup_flow() -> int:
-    """What happens when a person double-clicks the app."""
-    # Everything lives under Application Support, not next to the .app, so
-    # moving or replacing the app never touches the user's data.
-    os.environ.setdefault("SOCIALMCP_HOME", str(APP_SUPPORT))
+def _run_setup(report) -> tuple[Any, Any, Any]:
+    """The actual setup work, reporting each step as it goes.
 
+    Separated from the window so it can be tested without a display, and so
+    the ordering guarantee — UI first, work second — is visible in one place.
+    """
     from socialmcp import clients as clients_module
-    from socialmcp.clients import known_clients, setup_all
+    from socialmcp.clients import setup_all
     from socialmcp.config import load_config
 
+    report.step("Creating your data folder")
     config = load_config()
     config.ensure_dirs()
     drop = config.drop_dir / "linkedin"
+    report.done("Created your data folder")
 
     env = {"SOCIALMCP_HOME": str(config.home), "SOCIALMCP_DROP_DIR": str(config.drop_dir)}
     # The bundle's own executable is the launch command, so the config a client
@@ -187,7 +190,37 @@ def setup_flow() -> int:
         command=command[0], args=command[1:]
     )
 
+    # The slow step: probing for installed AI apps shells out to their CLIs,
+    # and macOS may raise a folder-permission prompt during it. Both are why
+    # the window has to exist before this runs.
+    report.step("Looking for your AI apps")
     _, results = setup_all(env=env)
+    found = ", ".join(r.client for r in results) if results else "none found"
+    report.done(f"Checked for AI apps ({found})")
+
+    report.step("Checking for local AI search")
+    embeddings = embedding_available(config)
+    report.done("Checked for local AI search")
+
+    return config, drop, (results, embeddings)
+
+
+def setup_flow() -> int:
+    """What happens when a person double-clicks the app."""
+    # Everything lives under Application Support, not next to the .app, so
+    # moving or replacing the app never touches the user's data.
+    os.environ.setdefault("SOCIALMCP_HOME", str(APP_SUPPORT))
+
+    # A window appears before any of the work below. A double-click that shows
+    # nothing for several seconds reads as a broken app, and a permission
+    # prompt from an application that has not introduced itself reads as
+    # suspicious. See packaging/macos/progress.py.
+    from progress import run_with_progress  # type: ignore[import-not-found]
+
+    from socialmcp.clients import known_clients, setup_all
+
+    config, drop, (results, embeddings) = run_with_progress(_run_setup, steps=3)
+    env = {"SOCIALMCP_HOME": str(config.home), "SOCIALMCP_DROP_DIR": str(config.drop_dir)}
 
     if not results:
         choice = dialog(
@@ -202,17 +235,15 @@ def setup_flow() -> int:
             subprocess.run(["open", "https://claude.ai/download"], check=False, timeout=30)
         return 1
 
-    message, buttons = build_setup_report(
-        results, drop, embeddings=embedding_available(config)
-    )
+    # `embeddings` was already probed inside the progress window; probing again
+    # here would add a second silent delay after the window has closed.
+    message, buttons = build_setup_report(results, drop, embeddings=embeddings)
     choice = dialog(message, buttons=buttons)
 
     if choice == "Replace it":
         # The user asked for this app to win, so overwrite the other entry.
         _, results = setup_all(env=env, force=True)
-        message, buttons = build_setup_report(
-            results, drop, embeddings=embedding_available(config)
-        )
+        message, buttons = build_setup_report(results, drop, embeddings=embeddings)
         choice = dialog(message, buttons=tuple(b for b in buttons if b != "Replace it"))
 
     if choice == "Disconnect":

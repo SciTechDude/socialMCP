@@ -295,3 +295,93 @@ def test_dmg_filename_carries_the_version_and_architecture():
     line = assignment[0]
     assert "${VERSION}" in line, f"dmg name must include the version: {line}"
     assert "${TARGET_ARCH}" in line, f"dmg name must include the architecture: {line}"
+
+
+def _load_progress():
+    """Load packaging/macos/progress.py the way the bundle does."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parent.parent / "packaging" / "macos" / "progress.py"
+    spec = importlib.util.spec_from_file_location("progress", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_progress_runs_the_work_even_with_no_gui_toolkit():
+    """A missing or unusable Tk must never stop an install.
+
+    CI has no display. More importantly, a user whose bundle somehow lacks the
+    toolkit should still get a configured app rather than nothing.
+    """
+    progress = _load_progress()
+    progress._tk_available = lambda: False
+
+    calls = []
+
+    def work(report):
+        report.step("probing")
+        report.done("probed")
+        calls.append("ran")
+        return "value"
+
+    assert progress.run_with_progress(work, steps=1) == "value"
+    assert calls == ["ran"], "the work must run even when no window can be drawn"
+
+
+def test_progress_reraises_failures_from_the_worker():
+    """Errors must surface, not be swallowed behind a closed window."""
+    progress = _load_progress()
+    progress._tk_available = lambda: False
+
+    def work(report):
+        raise RuntimeError("setup exploded")
+
+    with pytest.raises(RuntimeError, match="setup exploded"):
+        progress.run_with_progress(work, steps=1)
+
+
+def test_first_launch_shows_the_window_before_any_slow_work():
+    """The regression this guards: silence on double-click.
+
+    Setup probes other apps' CLIs and can trigger a macOS folder-permission
+    prompt. Doing that before anything is on screen made the app look broken
+    and the prompt look suspicious, so `setup_flow` must hand the work to the
+    progress window rather than calling it directly.
+    """
+    source = (
+        Path(__file__).resolve().parent.parent / "packaging" / "macos" / "app_main.py"
+    ).read_text(encoding="utf-8")
+    flow = source.split("def setup_flow(")[1]
+
+    assert "run_with_progress(_run_setup" in flow, (
+        "setup_flow must run setup inside the progress window"
+    )
+    # The slow calls belong in _run_setup, which the window drives. Split on
+    # the call site, not the import — the import appears first and slicing
+    # there would make this test unable to fail.
+    body_before_window = flow.split("run_with_progress(_run_setup")[0]
+    for slow in ("setup_all(", "embedding_available("):
+        assert slow not in body_before_window, (
+            f"{slow} runs before the progress window exists — that is the bug"
+        )
+
+
+def test_client_probe_timeout_is_short_and_detached_from_stdin():
+    """Launched from Finder, `claude mcp list` hangs waiting on a terminal.
+
+    It previously had a 120s timeout and inherited stdin, so first launch could
+    sit silent for two minutes. Bounded, detached, and with a fallback.
+    """
+    from socialmcp import clients
+
+    assert clients.CLIENT_PROBE_TIMEOUT <= 15, (
+        "a first-launch probe must fail fast; this one blocks the only UI"
+    )
+    source = (
+        Path(__file__).resolve().parent.parent / "socialmcp" / "clients.py"
+    ).read_text(encoding="utf-8")
+    probe = source.split("def _configure_via_claude_cli(")[1].split("def ")[0]
+    assert "stdin=subprocess.DEVNULL" in probe, "the probe must not inherit stdin"
+    assert "timeout=CLIENT_PROBE_TIMEOUT" in probe
+    assert "TimeoutExpired" in probe, "a timeout must fall back, not propagate"
