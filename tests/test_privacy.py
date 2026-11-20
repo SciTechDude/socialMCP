@@ -587,3 +587,39 @@ def test_local_signing_material_is_not_world_readable():
         f"signing material is readable beyond your account: {offenders} — "
         "chmod 700 the directory and 600 the files"
     )
+
+
+@requires_git
+def test_text_file_io_always_states_its_encoding():
+    """Unspecified encodings crash on Windows, where the default is cp1252.
+
+    A regression test with a real cause: the drop-folder README gained an
+    arrow and an ellipsis, and `write_text` without `encoding=` raised
+    UnicodeEncodeError on every Windows startup, because `ensure_dirs()` runs
+    each time the app launches. Any text written or read without pinning the
+    codec is the same bug waiting for the right character.
+    """
+    import re as _re
+
+    offenders: list[str] = []
+    call = _re.compile(r"\.(?:read_text|write_text)\s*\(", _re.MULTILINE)
+    for path in (REPO / "socialmcp").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for match in call.finditer(text):
+            # The argument list may span lines; look at the balanced call.
+            depth, index = 0, match.end() - 1
+            while index < len(text):
+                if text[index] == "(":
+                    depth += 1
+                elif text[index] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            if "encoding=" not in text[match.end() : index]:
+                line = text[: match.start()].count("\n") + 1
+                offenders.append(f"{path.relative_to(REPO)}:{line}")
+    assert not offenders, (
+        "these read or write text without an explicit encoding, which uses the "
+        f"platform default and breaks on Windows: {offenders}"
+    )

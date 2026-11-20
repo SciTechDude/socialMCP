@@ -76,7 +76,7 @@ class Database:
 
     def migrate(self) -> None:
         """Apply the schema. Idempotent — safe on every startup."""
-        self.conn.executescript(_SCHEMA_SQL.read_text())
+        self.conn.executescript(_SCHEMA_SQL.read_text(encoding="utf-8"))
         self._add_missing_columns()
         self._rebuild_views()
 
@@ -114,7 +114,7 @@ class Database:
         for name in ("v_pending_invitations", "v_contact_clusters"):
             self.conn.execute(f"DROP VIEW IF EXISTS {name}")
         self.conn.executescript(
-            _SCHEMA_SQL.read_text().split("-- Convenience views")[-1]
+            _SCHEMA_SQL.read_text(encoding="utf-8").split("-- Convenience views")[-1]
         )
 
     def _migrate_vec(self) -> None:
@@ -128,7 +128,7 @@ class Database:
             )
             self.conn.execute("DROP TABLE IF EXISTS vec_contacts")
             self.conn.execute("UPDATE contacts SET embedding_dirty = 1, embedding_hash = NULL")
-        ddl = _SCHEMA_VEC_SQL.read_text().replace("{DIM}", str(self.embedding_dim))
+        ddl = _SCHEMA_VEC_SQL.read_text(encoding="utf-8").replace("{DIM}", str(self.embedding_dim))
         self.conn.executescript(ddl)
         self.set_meta("embedding_dim", str(self.embedding_dim))
 

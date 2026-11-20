@@ -136,7 +136,12 @@ class Config:
                     f"Once read, the file moves to `{self.archive_dir.name}/{folder}/`"
                     " so it is not read twice. You can drop a newer export in\n"
                     "here any time; re-reading the same one changes nothing.\n\n"
-                    "Nothing in this folder is ever uploaded anywhere.\n"
+                    "Nothing in this folder is ever uploaded anywhere.\n",
+                    # Explicit, because this text contains arrows and an
+                    # ellipsis and Windows defaults to cp1252, which cannot
+                    # encode them. ensure_dirs() runs on every startup, so
+                    # the default would crash the app for Windows users.
+                    encoding="utf-8",
                 )
 
     def source_for(self, archive_path: Path) -> str | None:
