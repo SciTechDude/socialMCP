@@ -189,14 +189,26 @@ verifies without network access on first open.
 
 ```bash
 git tag -a v0.1.0 -m "SocialMCP 0.1.0" && git push origin v0.1.0
-gh release create v0.1.1 dist/SocialMCP-arm64.dmg \
+gh release create v0.1.1 dist/SocialMCP-0.1.1-arm64.dmg \
   --title "SocialMCP 0.1.1" --notes-file CHANGELOG-0.1.1.md --latest
 ```
 
+Three rules, each learned the hard way:
+
 **Never replace an asset on a published release.** Download counts live on the
-asset and reset, and the checksum in the notes stops matching what earlier
-downloaders have — which looks like tampering for a program that reads private
-data. Ship a new version instead.
+asset and reset to zero, and the checksum in the notes stops matching what
+earlier downloaders have — which looks like tampering for a program that reads
+private contact data. Ship a new version instead. The versioned filename makes
+this mostly self-enforcing: a new release's asset cannot collide with an old
+one.
+
+**Never delete an old release.** Mark a superseded one as a pre-release if you
+like, but keep it. It costs nothing, and it is the only way to bisect a
+regression — the one case where "please upgrade" is exactly the wrong advice.
+
+**Bump the version before building.** `pyproject.toml` is the single source;
+the spec and the dmg filename both read it, and `tests/test_packaging.py`
+fails if `__version__` drifts from it.
 
 Apple Silicon only. Intel Macs are pointed at the `pipx`/`uv tool` install,
 which works there and needs no bundled interpreter. GitHub-hosted macOS

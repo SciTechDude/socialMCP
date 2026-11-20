@@ -30,6 +30,12 @@ from typing import Any
 
 SERVER_KEY = "socialmcp"
 
+# How long to wait on another app's CLI before giving up and editing its config
+# file instead. Deliberately short: this runs during first launch, where every
+# second is a second of an apparently frozen app. The previous 120s meant a
+# Finder launch could sit silent for two minutes and look broken.
+CLIENT_PROBE_TIMEOUT = 10
+
 
 @dataclass(slots=True)
 class ClientTarget:
@@ -229,7 +235,15 @@ def configure_client(
 
     # Claude Code owns ~/.claude.json and rewrites it; use its CLI instead.
     if target.key == "claude-code" and shutil.which("claude"):
-        return _configure_via_claude_cli(target, launch, env=env, force=force, dry_run=dry_run)
+        via_cli = _configure_via_claude_cli(
+            target, launch, env=env, force=force, dry_run=dry_run
+        )
+        if via_cli is not None:
+            return via_cli
+        # The CLI did not answer in time — it waits on a terminal when the app
+        # was launched from Finder. Editing the file is less safe, since Claude
+        # Code rewrites it, but it is the difference between a connected app and
+        # a dead end.
 
     try:
         config = _read_json(target.config_path)
@@ -288,9 +302,25 @@ def _configure_via_claude_cli(
     force: bool,
     dry_run: bool,
 ) -> SetupResult:
-    listed = subprocess.run(
-        ["claude", "mcp", "list"], capture_output=True, text=True, check=False, timeout=120
-    )
+    # Bounded and detached from stdin. Launched from Finder this probe hung for
+    # the full timeout, which the app spent showing nothing at all — the CLI
+    # waits on a terminal it does not have. Ten seconds is generous for a
+    # listing; past that, writing the config file directly is the better
+    # fallback, and CLIENT_PROBE_TIMEOUT documents the intent.
+    try:
+        listed = subprocess.run(
+            ["claude", "mcp", "list"],
+            capture_output=True,
+            text=True,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            timeout=CLIENT_PROBE_TIMEOUT,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        # None means "the CLI is not usable here"; the caller then edits the
+        # config file directly, which is second choice but far better than
+        # reporting failure to someone who just wants the app connected.
+        return None
     if SERVER_KEY in listed.stdout and not force:
         return SetupResult(target.display_name, "already", "already registered", "claude mcp")
 

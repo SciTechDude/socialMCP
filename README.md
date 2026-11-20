@@ -2,6 +2,13 @@
 
 **A local-first personal CRM for your professional network, delivered entirely as an MCP server.**
 
+> **Early release.** This is new software with one maintainer and very few
+> users so far. The downloads are marked as pre-releases while it is being
+> hardened: expect rough edges, and please
+> [report anything that breaks](#tell-me-what-broke) — your data is never at
+> risk (SocialMCP only reads the export you give it), but the experience
+> around it is still being smoothed out.
+
 No scraping. No cookies. No browser automation. No web UI. You drop the data
 export that LinkedIn already owes you into a folder, and **any MCP client**
 becomes the interface to a searchable CRM that remembers how you met everyone.
@@ -35,7 +42,7 @@ and opens the folder to drop your LinkedIn export into. No Python, no terminal.
 >
 > | Your Mac | Download |
 > |---|---|
-> | Apple Silicon — M1, M2, M3, M4 | `SocialMCP-arm64.dmg` |
+> | Apple Silicon — M1, M2, M3, M4 | the file ending `-arm64.dmg` |
 > | Intel | No app bundle — use the [command-line install](#get-it) below, which works on Intel today |
 >
 > Not sure?  menu → **About This Mac**. "Apple M*" means Apple Silicon;
@@ -52,7 +59,7 @@ instructions tell you to, treat that as a sign the file did not come from
 check a download yourself before opening it:
 
 ```bash
-spctl --assess --type open --context context:primary-signature -v SocialMCP-arm64.dmg
+spctl --assess --type open --context context:primary-signature -v ~/Downloads/SocialMCP-*.dmg
 # accepted
 # source=Notarized Developer ID
 ```
@@ -93,9 +100,18 @@ no crash reports. That is the point, and it also means I have no idea whether
 it worked for you. A download count is the only thing I can see, and it cannot
 tell the difference between "works beautifully" and "crashed on launch".
 
-So if anything failed, confused you, or parsed your export wrong, please
-[open an issue](https://github.com/SciTechDude/socialMCP/issues) — even a
-one-liner. Especially worth reporting:
+**Please try the [newest release](https://github.com/SciTechDude/socialMCP/releases)
+first** — it is a one-person project and only the current version is
+supported. Older releases stay downloadable so a regression can be traced, but
+most problems are already fixed in the newest build. (That link goes to the
+full list rather than `/releases/latest`, because GitHub excludes pre-releases
+from "latest" and the newest build is often a pre-release.)
+
+Then, if anything failed, confused you, or parsed your export wrong:
+[open an issue](https://github.com/SciTechDude/socialMCP/issues), or ask in
+[Discussions](https://github.com/SciTechDude/socialMCP/discussions) if it is
+more of a question than a bug — even a one-liner is useful. Especially worth
+reporting:
 
 - it would not install, or the app would not open
 - your export parsed but something came out wrong — a missing person, a wrong
