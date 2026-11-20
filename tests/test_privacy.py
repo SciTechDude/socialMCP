@@ -521,13 +521,23 @@ def test_build_script_notarizes_through_the_keychain_not_a_password():
     `store-credentials`.
     """
     script = (REPO / "packaging" / "macos" / "build.sh").read_text(encoding="utf-8")
-    submit_lines = [
-        ln for ln in script.splitlines() if "notarytool" in ln and "submit" in ln
+    # Join shell line continuations first: the submit command is wrapped across
+    # lines, and checking raw lines would miss arguments on the second one —
+    # making this test pass for the wrong reason.
+    flattened = script.replace("\\\n", " ")
+    # Comments are excluded: the header documents the one-time
+    # `store-credentials` call, which legitimately shows a `--password
+    # <placeholder>`, and prose explains why `--wait` is not used.
+    commands = [
+        ln
+        for ln in flattened.splitlines()
+        if "notarytool" in ln and not ln.lstrip().startswith("#")
     ]
-    assert submit_lines, "build.sh no longer submits for notarization"
-    for line in submit_lines:
+    assert commands, "build.sh no longer calls notarytool"
+    assert any("submit" in ln for ln in commands), "nothing is submitted for notarization"
+    for line in commands:
         assert "--keychain-profile" in line, (
-            "notarytool submit must authenticate with --keychain-profile: " + line
+            "every notarytool call must authenticate with --keychain-profile: " + line
         )
         assert "--password" not in line, (
             "a password on the notarytool command line leaks into shell history, "
