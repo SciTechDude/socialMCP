@@ -521,13 +521,23 @@ def test_build_script_notarizes_through_the_keychain_not_a_password():
     `store-credentials`.
     """
     script = (REPO / "packaging" / "macos" / "build.sh").read_text(encoding="utf-8")
-    submit_lines = [
-        ln for ln in script.splitlines() if "notarytool" in ln and "submit" in ln
+    # Join shell line continuations first: the submit command is wrapped across
+    # lines, and checking raw lines would miss arguments on the second one —
+    # making this test pass for the wrong reason.
+    flattened = script.replace("\\\n", " ")
+    # Comments are excluded: the header documents the one-time
+    # `store-credentials` call, which legitimately shows a `--password
+    # <placeholder>`, and prose explains why `--wait` is not used.
+    commands = [
+        ln
+        for ln in flattened.splitlines()
+        if "notarytool" in ln and not ln.lstrip().startswith("#")
     ]
-    assert submit_lines, "build.sh no longer submits for notarization"
-    for line in submit_lines:
+    assert commands, "build.sh no longer calls notarytool"
+    assert any("submit" in ln for ln in commands), "nothing is submitted for notarization"
+    for line in commands:
         assert "--keychain-profile" in line, (
-            "notarytool submit must authenticate with --keychain-profile: " + line
+            "every notarytool call must authenticate with --keychain-profile: " + line
         )
         assert "--password" not in line, (
             "a password on the notarytool command line leaks into shell history, "
@@ -586,4 +596,40 @@ def test_local_signing_material_is_not_world_readable():
     assert not offenders, (
         f"signing material is readable beyond your account: {offenders} — "
         "chmod 700 the directory and 600 the files"
+    )
+
+
+@requires_git
+def test_text_file_io_always_states_its_encoding():
+    """Unspecified encodings crash on Windows, where the default is cp1252.
+
+    A regression test with a real cause: the drop-folder README gained an
+    arrow and an ellipsis, and `write_text` without `encoding=` raised
+    UnicodeEncodeError on every Windows startup, because `ensure_dirs()` runs
+    each time the app launches. Any text written or read without pinning the
+    codec is the same bug waiting for the right character.
+    """
+    import re as _re
+
+    offenders: list[str] = []
+    call = _re.compile(r"\.(?:read_text|write_text)\s*\(", _re.MULTILINE)
+    for path in (REPO / "socialmcp").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for match in call.finditer(text):
+            # The argument list may span lines; look at the balanced call.
+            depth, index = 0, match.end() - 1
+            while index < len(text):
+                if text[index] == "(":
+                    depth += 1
+                elif text[index] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            if "encoding=" not in text[match.end() : index]:
+                line = text[: match.start()].count("\n") + 1
+                offenders.append(f"{path.relative_to(REPO)}:{line}")
+    assert not offenders, (
+        "these read or write text without an explicit encoding, which uses the "
+        f"platform default and breaks on Windows: {offenders}"
     )

@@ -12,6 +12,7 @@ LinkedIn adapter vanishes and every export is "unrecognized".
 
 from __future__ import annotations
 
+import os
 import plistlib
 import sys
 from pathlib import Path
@@ -206,7 +207,11 @@ def test_setup_report_lists_connected_clients_and_restarts():
     # Only newly written configs need a restart; an existing one does not.
     assert "Restart needed for: Cursor" in message
     assert "Replace it" not in buttons
-    assert buttons[-1] == "Open the folder"
+    # The default button must be the thing the user has to do next, not a step
+    # towards it. "Open the folder" only reveals a folder they must then drag a
+    # file into from another window; picking the export is the actual outcome.
+    assert buttons[-1] == app.ACTION_IMPORT
+    assert app.ACTION_FOLDER in buttons, "dragging into the folder stays available"
 
 
 def test_setup_report_surfaces_a_failure_with_its_reason():
@@ -385,3 +390,101 @@ def test_client_probe_timeout_is_short_and_detached_from_stdin():
     assert "stdin=subprocess.DEVNULL" in probe, "the probe must not inherit stdin"
     assert "timeout=CLIENT_PROBE_TIMEOUT" in probe
     assert "TimeoutExpired" in probe, "a timeout must fall back, not propagate"
+
+
+def test_bundle_requests_no_folder_permissions():
+    """The app must ask for no file access at all.
+
+    It opens a file picker, which macOS runs out of process: the app receives
+    the one chosen file and nothing else. Declaring a folder usage description
+    makes macOS prompt for access to an entire folder — a frightening ask for
+    software that reads your contacts, and one the code never needed.
+    """
+    spec = (
+        Path(__file__).resolve().parent.parent / "packaging" / "macos" / "socialmcp.spec"
+    ).read_text(encoding="utf-8")
+    for key in (
+        '"NSDesktopFolderUsageDescription":',
+        '"NSDocumentsFolderUsageDescription":',
+        '"NSDownloadsFolderUsageDescription":',
+        '"NSFileProviderDomainUsageDescription":',
+    ):
+        assert key not in spec, (
+            f"{key} makes macOS prompt for whole-folder access; the file picker "
+            "needs no permission, so add this back only with a real reason"
+        )
+
+
+def test_the_drop_folder_readme_is_written_for_a_human():
+    """Whoever opens that folder is mid-install and confused, not debugging.
+
+    It used to say "routed to the `linkedin` adapter" and "this folder is
+    gitignored", which answers nothing the reader is asking.
+    """
+    import tempfile
+
+    from socialmcp.config import Config
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        config = Config(home=root, drop_dir=root / "drop")
+        config.ensure_dirs()
+        readme = next((root / "drop").glob("*/README.md"), None)
+        assert readme is not None, "no per-source README was written"
+        text = readme.read_text(encoding="utf-8")
+
+    assert "do not double-click" in text.lower(), (
+        "double-clicking a .zip unzips it; this is the trap users hit"
+    )
+    assert "Choose my export" in text, "point at the easier path in the app"
+    for jargon in ("adapter", "gitignore"):
+        assert jargon not in text.lower(), f"{jargon!r} means nothing to this reader"
+
+
+def test_setup_refuses_to_run_from_a_mounted_disk_image(monkeypatch, tmp_path):
+    """Registering a /Volumes path produces an install that dies on eject.
+
+    Double-clicking the app inside the downloaded .dmg is the most natural
+    thing to do — the window opens with the app right there. Setup writes the
+    binary's absolute path into each AI client's config, so that path has to
+    be somewhere permanent.
+    """
+    app = _load_app_main()
+
+    bundle = tmp_path / "SocialMCP.app"
+    bundle.mkdir()
+    monkeypatch.setattr(app, "app_bundle_root", lambda: bundle)
+
+    # Not under /Volumes: a normal install, no complaint.
+    assert app.running_from_removable_location() is None
+
+    # Under /Volumes on a read-only filesystem: a mounted image.
+    monkeypatch.setattr(app, "app_bundle_root", lambda: Path("/Volumes/SocialMCP 9.9/SocialMCP.app"))
+
+    class _ReadOnly:
+        f_flag = os.ST_RDONLY
+
+    monkeypatch.setattr(app.os, "statvfs", lambda _path: _ReadOnly())
+    assert app.running_from_removable_location() == Path(
+        "/Volumes/SocialMCP 9.9/SocialMCP.app"
+    )
+
+    # Writable external disk: someone may really keep apps there, so allow it.
+    class _Writable:
+        f_flag = 0
+
+    monkeypatch.setattr(app.os, "statvfs", lambda _path: _Writable())
+    assert app.running_from_removable_location() is None
+
+
+def test_setup_flow_checks_the_location_before_configuring_anything():
+    """The guard must come first, or a dead path is written before we look."""
+    source = (
+        Path(__file__).resolve().parent.parent / "packaging" / "macos" / "app_main.py"
+    ).read_text(encoding="utf-8")
+    flow = source.split("def setup_flow(")[1].split("\ndef ")[0]
+
+    guard = flow.find("running_from_removable_location()")
+    work = flow.find("run_with_progress(_run_setup")
+    assert guard != -1, "setup_flow no longer checks where it is running from"
+    assert 0 < guard < work, "the location check must precede any setup work"

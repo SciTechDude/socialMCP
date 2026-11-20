@@ -26,6 +26,10 @@ from typing import Any
 # A bundled app inherits almost no environment: launched from Finder there is
 # no shell, no PATH to speak of, and no working directory the user chose. Pin
 # what we need before importing anything that reads config.
+ACTION_IMPORT = "Choose my export…"
+ACTION_FOLDER = "Open the folder"
+ACTION_DONE = "Done"
+
 APP_SUPPORT = Path.home() / "Library" / "Application Support" / "SocialMCP"
 
 
@@ -44,6 +48,32 @@ def app_bundle_root() -> Path | None:
 def launch_command() -> list[str]:
     """How a client should start the server: this same binary, plus `serve`."""
     return [str(Path(sys.executable).resolve()), "serve"]
+
+
+def running_from_removable_location() -> Path | None:
+    """The bundle's path if it will stop existing, else None.
+
+    Opening the app from inside the downloaded .dmg is the most natural thing
+    to do — the disk image window appears the moment you double-click the
+    download, with the app right there. But setup writes this binary's absolute
+    path into each AI client's config, and that path is
+    `/Volumes/SocialMCP 0.1.2/...`, which vanishes the moment the image is
+    ejected. The client then fails to start a server that no longer exists,
+    with nothing to suggest why.
+
+    Detected rather than guessed: a path under /Volumes on a read-only
+    filesystem is a mounted image. A writable external disk is left alone,
+    because someone may genuinely keep applications there.
+    """
+    bundle = app_bundle_root()
+    if bundle is None or not str(bundle).startswith("/Volumes/"):
+        return None
+    try:
+        read_only = bool(os.statvfs(bundle).f_flag & os.ST_RDONLY)
+    except (OSError, AttributeError):
+        # Cannot tell; /Volumes alone is suspicious enough to warn about.
+        read_only = True
+    return bundle if read_only else None
 
 
 def dialog(message: str, *, title: str = "SocialMCP", buttons: tuple[str, ...] = ("OK",)) -> str:
@@ -137,14 +167,18 @@ def build_setup_report(results, drop_folder: Path, *, embeddings: bool) -> tuple
         "",
         "Next:",
         "",
-        "1. Put your LinkedIn data export .zip in:",
-        f"   {drop_folder}",
-        "   (LinkedIn: Settings & Privacy -> Data Privacy -> Get a copy of your data,",
-        "    and choose the larger archive.)",
+        '1. Click "Choose my export…" below and pick the .zip LinkedIn sent you.',
+        "   Pick the .zip exactly as you downloaded it — do not unzip it first.",
+        "   (Don't have it yet? LinkedIn: Settings & Privacy -> Data Privacy ->",
+        "    Get a copy of your data. Choose the larger archive; it arrives by",
+        "    email, usually within a day.)",
         "",
         "2. Quit and reopen your AI app.",
         "",
         '3. Ask it: "what can you do with my network?"',
+        "",
+        "You can also drop exports straight into this folder at any time:",
+        f"   {drop_folder}",
     ]
     if restart:
         lines += ["", f"Restart needed for: {', '.join(r.client for r in restart)}"]
@@ -162,7 +196,11 @@ def build_setup_report(results, drop_folder: Path, *, embeddings: bool) -> tuple
     # is the only place they will look.
     if connected and not blocked:
         buttons.append("Disconnect")
-    buttons.append("Open the folder")
+    buttons.append(ACTION_FOLDER)
+    # Last button is the default, and this is the one thing the user must do
+    # next. Previously the default was "open a folder so you can drag a file
+    # into it", which is a step, not an outcome.
+    buttons.append(ACTION_IMPORT)
     return "\n".join(lines), tuple(buttons)
 
 
@@ -207,6 +245,26 @@ def _run_setup(report) -> tuple[Any, Any, Any]:
 
 def setup_flow() -> int:
     """What happens when a person double-clicks the app."""
+    # Refuse before writing anything. Configuring an AI client to launch a
+    # binary inside a mounted disk image produces an install that works until
+    # the image is ejected and then fails silently, which is worse than not
+    # installing at all.
+    mounted = running_from_removable_location()
+    if mounted is not None:
+        choice = dialog(
+            "Please move SocialMCP to your Applications folder first.\n\n"
+            "It is running from the disk image you downloaded, which "
+            "disappears when you eject it — and your AI app would be left "
+            "pointing at software that is no longer there.\n\n"
+            "Drag the SocialMCP icon onto the Applications shortcut in the "
+            "window that opened, then open SocialMCP from Applications.",
+            buttons=("Open Applications", "OK"),
+        )
+        if choice == "Open Applications":
+            subprocess.run(["open", "/Applications"], check=False, timeout=30)
+        reveal(mounted)
+        return 1
+
     # Everything lives under Application Support, not next to the .app, so
     # moving or replacing the app never touches the user's data.
     os.environ.setdefault("SOCIALMCP_HOME", str(APP_SUPPORT))
@@ -238,21 +296,120 @@ def setup_flow() -> int:
     # `embeddings` was already probed inside the progress window; probing again
     # here would add a second silent delay after the window has closed.
     message, buttons = build_setup_report(results, drop, embeddings=embeddings)
-    choice = dialog(message, buttons=buttons)
+    choice = ask(message, buttons=buttons)
 
     if choice == "Replace it":
         # The user asked for this app to win, so overwrite the other entry.
         _, results = setup_all(env=env, force=True)
         message, buttons = build_setup_report(results, drop, embeddings=embeddings)
-        choice = dialog(message, buttons=tuple(b for b in buttons if b != "Replace it"))
+        choice = ask(message, buttons=tuple(b for b in buttons if b != "Replace it"))
 
     if choice == "Disconnect":
         return disconnect_flow(config)
 
     if choice == "Get Ollama":
         subprocess.run(["open", "https://ollama.com"], check=False, timeout=30)
+        return 0
+
+    if choice == ACTION_IMPORT:
+        return import_flow(config, drop)
 
     reveal(drop)
+    return 0
+
+
+def ask(message: str, *, buttons: tuple[str, ...], title: str = "SocialMCP") -> str:
+    """Show a choice, in a real window when possible.
+
+    AppleScript's `display dialog` accepts at most three buttons; the summary
+    can legitimately offer four, and when it does, osascript fails and the
+    caller cannot tell the difference between an error and a click. Tk is
+    already bundled for the progress window, so prefer it and keep the
+    AppleScript path as the fallback with the list trimmed to what it supports.
+    """
+    from ui import summary_window  # type: ignore[import-not-found]
+
+    answer = summary_window(message, buttons=buttons, title=title)
+    if answer is not None:
+        return answer
+    return dialog(message, title=title, buttons=buttons[-3:])
+
+
+def import_flow(config, drop: Path) -> int:
+    """Let the user pick their export, then ingest it.
+
+    Replaces "open this folder and drag a file into it from another window",
+    which needed two Finder windows and an instruction nobody read. The picker
+    is also why the app asks for no folder permission: macOS hands over the one
+    chosen file and nothing else.
+    """
+    import shutil
+
+    from ui import choose_export  # type: ignore[import-not-found]
+
+    chosen = choose_export()
+    if chosen is None:
+        reveal(drop)
+        return 0
+
+    if chosen.is_dir():
+        dialog(
+            f"{chosen.name} is a folder, not the .zip LinkedIn gave you.\n\n"
+            "Double-clicking the download unzips it, which is easy to do by "
+            "accident. Pick the original .zip instead — or drag the .zip into "
+            "the folder that opens next.",
+            buttons=("OK",),
+        )
+        reveal(drop)
+        return 1
+
+    drop.mkdir(parents=True, exist_ok=True)
+    target = drop / chosen.name
+    try:
+        if chosen.resolve() != target.resolve():
+            shutil.copy2(chosen, target)
+    except OSError as exc:
+        dialog(f"Could not copy {chosen.name}:\n\n{exc}", buttons=("OK",))
+        return 1
+
+    def work(report):
+        report.step(f"Reading {chosen.name}")
+        from socialmcp.core.db import connect
+        from socialmcp.core.ingest import ingest_path
+
+        db = connect(config)
+        result = ingest_path(db, config, target)
+        report.done(f"Read {chosen.name}")
+        report.step("Counting your network")
+        stats = db.execute("select count(*) from contacts").fetchone()[0]
+        report.done("Counted your network")
+        return result, stats
+
+    from progress import run_with_progress  # type: ignore[import-not-found]
+
+    try:
+        _result, contacts = run_with_progress(
+            work, steps=2, title="Reading your export", intro="This stays on your Mac."
+        )
+    except Exception as exc:
+        dialog(
+            f"Could not read {chosen.name}:\n\n{exc}\n\n"
+            "If this was not a LinkedIn export, try the original .zip from "
+            "LinkedIn: Settings & Privacy -> Data Privacy -> Get a copy of your data.",
+            buttons=("OK",),
+        )
+        return 1
+
+    ask(
+        f"Imported {chosen.name}.\n\n"
+        f"Your network now has {contacts} people.\n\n"
+        "Quit and reopen your AI app, then ask it:\n"
+        '  "what can you do with my network?"\n\n'
+        "Next time, you can drop a new export straight into:\n"
+        f"  {drop}\n"
+        "or open SocialMCP again and choose it.",
+        buttons=(ACTION_FOLDER, ACTION_DONE),
+    )
     return 0
 
 

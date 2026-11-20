@@ -34,8 +34,13 @@ Assistant:  7 people, 13-15 Oct. Four are still cold:
 ## Get it
 
 **Mac, no setup** — [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases)
-→ drag to Applications → double-click. It finds your AI app, connects itself,
-and opens the folder to drop your LinkedIn export into. No Python, no terminal.
+→ drag it to Applications → then **open it from Applications**. Those last two
+are separate steps, and the second is the one that does the work: dragging only
+copies the app, and nothing sets itself up until you open it. It then finds your
+AI app, connects itself, and asks you to pick your LinkedIn export.
+
+No Python, no terminal, and **no access to your files** — you choose one `.zip`
+and it reads that one file.
 
 > **Pick the file that matches your Mac.** There are two, and the wrong one
 > will not open at all:

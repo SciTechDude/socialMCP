@@ -180,7 +180,37 @@ if [[ "$SIGN" == "1" ]]; then
     : "${SOCIALMCP_NOTARY_PROFILE:?set SOCIALMCP_NOTARY_PROFILE}"
     codesign --force --timestamp --sign "$SOCIALMCP_SIGN_IDENTITY" "$DMG"
     echo "==> Notarizing (a few minutes)"
-    xcrun notarytool submit "$DMG" --keychain-profile "$SOCIALMCP_NOTARY_PROFILE" --wait
+    # Submit, then poll, rather than `--wait`. notarytool 1.1.3 (the version
+    # shipped with Command Line Tools) crashes with SIGBUS inside --wait after
+    # the upload has already succeeded, which aborts the build and leaves a
+    # perfectly good submission orphaned in Apple's queue. Submitting and
+    # polling separately also means a crashed poll can be retried without
+    # re-uploading 24 MB.
+    SUBMIT_LOG="$(mktemp)"
+    xcrun notarytool submit "$DMG" \
+        --keychain-profile "$SOCIALMCP_NOTARY_PROFILE" --no-wait | tee "$SUBMIT_LOG"
+    SUBMISSION_ID="$(awk '/^ *id: /{print $2; exit}' "$SUBMIT_LOG")"
+    rm -f "$SUBMIT_LOG"
+    [[ -n "$SUBMISSION_ID" ]] || { echo "error: no submission id returned" >&2; exit 1; }
+
+    echo "==> Waiting for Apple to finish (submission $SUBMISSION_ID)"
+    NOTARY_STATUS="In Progress"
+    for _ in $(seq 1 120); do   # up to ~20 minutes at 10s intervals
+        sleep 10
+        NOTARY_STATUS="$(xcrun notarytool info "$SUBMISSION_ID" \
+            --keychain-profile "$SOCIALMCP_NOTARY_PROFILE" 2>/dev/null |
+            awk '/^ *status: /{sub(/^ *status: /, ""); print; exit}')"
+        [[ "$NOTARY_STATUS" == "In Progress" || -z "$NOTARY_STATUS" ]] || break
+        printf '.'
+    done
+    echo
+    if [[ "$NOTARY_STATUS" != "Accepted" ]]; then
+        echo "error: notarization ended as '${NOTARY_STATUS:-unknown}'" >&2
+        echo "  xcrun notarytool log $SUBMISSION_ID --keychain-profile $SOCIALMCP_NOTARY_PROFILE" >&2
+        exit 1
+    fi
+    echo "==> Accepted"
+
     # Stapling lets the dmg verify offline; without it the first open needs network.
     xcrun stapler staple "$DMG"
     spctl --assess --type open --context context:primary-signature -v "$DMG"
