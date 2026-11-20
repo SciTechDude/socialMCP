@@ -32,6 +32,11 @@ DROP_SUBDIRS: dict[str, tuple[str, str]] = {
     "linkedin": ("linkedin", "LinkedIn Data Archive (Settings & Privacy -> Get a copy of your data)"),
 }
 
+# How each platform spells its own name, for text a user reads. Folder names are
+# lowercase, and `"linkedin".capitalize()` gives "Linkedin", which looks like a
+# typo in the one place a new user is already unsure what they are looking at.
+PLATFORM_NAMES: dict[str, str] = {"linkedin": "LinkedIn"}
+
 
 def _default_drop_dir(home: Path) -> Path:
     """Prefer a repo-local ./drop-archive when running from a source checkout.
@@ -104,23 +109,34 @@ class Config:
             path.mkdir(parents=True, exist_ok=True)
         if not self.create_source_dirs:
             return
-        for folder, (source, description) in DROP_SUBDIRS.items():
+        for folder, (source, _description) in DROP_SUBDIRS.items():
             target = self.drop_dir / folder
             target.mkdir(parents=True, exist_ok=True)
             readme = target / "README.md"
             if not readme.exists():
-                status = (
-                    f"Routed to the `{source}` adapter."
-                    if source
-                    else "Adapter auto-detected from the archive contents."
-                )
+                # Written for whoever opens this folder, which is usually
+                # someone mid-install wondering what to do. The previous
+                # version mentioned adapters and gitignore, which answers a
+                # question nobody standing here is asking.
+                # `description` carries the long "where to find it" phrasing,
+                # which belongs in the body, not a heading or a trailing
+                # restatement. The folder name is the clearer title.
+                platform = PLATFORM_NAMES.get(folder, folder.capitalize()) if source else "data"
                 readme.write_text(
-                    f"# drop-archive/{folder}\n\n"
-                    f"Drop **{description}** .zip files here.\n\n"
-                    f"{status}\n\n"
-                    "Archives are ingested automatically by the harness, then moved to "
-                    f"`{self.archive_dir.name}/{folder}/`. Nothing here is ever uploaded "
-                    "anywhere; this folder is gitignored.\n"
+                    f"# Put your {platform} export here\n\n"
+                    "**Drag the `.zip` into this folder — do not double-click it.**\n"
+                    "Double-clicking unzips it, and the `.zip` is what SocialMCP\n"
+                    "wants, exactly as you downloaded it.\n\n"
+                    "Easier: open the SocialMCP app and click "
+                    '"Choose my export…" — it will find the file for you.\n\n'
+                    "Don't have an export yet? LinkedIn → Settings & Privacy →\n"
+                    "Data Privacy → Get a copy of your data. Choose the **larger**\n"
+                    "archive (the one with your messages and invitations). It\n"
+                    "arrives by email, usually within a day.\n\n"
+                    f"Once read, the file moves to `{self.archive_dir.name}/{folder}/`"
+                    " so it is not read twice. You can drop a newer export in\n"
+                    "here any time; re-reading the same one changes nothing.\n\n"
+                    "Nothing in this folder is ever uploaded anywhere.\n"
                 )
 
     def source_for(self, archive_path: Path) -> str | None:

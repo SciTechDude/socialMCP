@@ -54,11 +54,28 @@ up to 24 hours. Carry on with Step 2 while you wait.
 
    If you do end up with a file for the wrong chip, nothing is broken — macOS
    just says the app is damaged. Delete it and use the command-line install.
-2. Open the downloaded file and drag **SocialMCP** into your Applications folder.
-3. Double-click it.
+2. **Open the downloaded `.dmg`** and drag the **SocialMCP** icon onto the
+   **Applications** shortcut beside it. This only copies the app — you will see
+   a copy progress bar, and then nothing else happens. That is expected.
 
-That is the whole install. There is no Python to set up and no terminal to
-open — everything it needs is inside the app.
+3. **Open your Applications folder and double-click SocialMCP.** *This* is the
+   step that sets everything up: a window appears, finds your AI apps, connects
+   itself, and then asks for your LinkedIn export.
+
+4. Click **Choose my export…** and pick the `.zip` LinkedIn sent you —
+   **exactly as you downloaded it, not unzipped.** (Double-clicking a `.zip`
+   unzips it, which is easy to do by accident. If you already did, just
+   re-download or pick the original `.zip`.)
+
+5. Quit and reopen your AI app, then ask it *"what can you do with my
+   network?"*
+
+Steps 2 and 3 are separate, and that catches people out: dragging the app into
+Applications installs it but does not run it. Nothing sets itself up until you
+open the app.
+
+There is no Python to set up and no terminal to open — everything it needs is
+inside the app, and it asks for no access to your files. You hand it one file.
 
 <details>
 <summary><b>Windows</b></summary>
