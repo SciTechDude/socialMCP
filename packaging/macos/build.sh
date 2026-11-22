@@ -180,7 +180,56 @@ if [[ "$SIGN" == "1" ]]; then
     : "${SOCIALMCP_NOTARY_PROFILE:?set SOCIALMCP_NOTARY_PROFILE}"
     codesign --force --timestamp --sign "$SOCIALMCP_SIGN_IDENTITY" "$DMG"
     echo "==> Notarizing (a few minutes)"
-    xcrun notarytool submit "$DMG" --keychain-profile "$SOCIALMCP_NOTARY_PROFILE" --wait
+    # Submit, then poll, rather than `--wait`. notarytool 1.1.3 (the version
+    # shipped with Command Line Tools) crashes with SIGBUS inside --wait after
+    # the upload has already succeeded, which aborts the build and leaves a
+    # perfectly good submission orphaned in Apple's queue. Submitting and
+    # polling separately also means a crashed poll can be retried without
+    # re-uploading 24 MB.
+    SUBMIT_LOG="$(mktemp)"
+    xcrun notarytool submit "$DMG" \
+        --keychain-profile "$SOCIALMCP_NOTARY_PROFILE" --no-wait | tee "$SUBMIT_LOG"
+    SUBMISSION_ID="$(awk '/^ *id: /{print $2; exit}' "$SUBMIT_LOG")"
+    rm -f "$SUBMIT_LOG"
+    [[ -n "$SUBMISSION_ID" ]] || { echo "error: no submission id returned" >&2; exit 1; }
+
+    echo "==> Waiting for Apple to finish (submission $SUBMISSION_ID)"
+    # Exponential backoff, capped at five minutes. The notary service is rate
+    # limited per developer account, so a tight polling loop is both rude and
+    # risks being throttled. Most submissions clear in a few minutes; some sit
+    # in the queue far longer, and the delay then costs nothing to wait out.
+    NOTARY_STATUS="In Progress"
+    NOTARY_DELAY=20
+    NOTARY_WAITED=0
+    while (( NOTARY_WAITED < 3600 )); do        # give up after an hour
+        sleep "$NOTARY_DELAY"
+        NOTARY_WAITED=$(( NOTARY_WAITED + NOTARY_DELAY ))
+        NOTARY_STATUS="$(xcrun notarytool info "$SUBMISSION_ID" \
+            --keychain-profile "$SOCIALMCP_NOTARY_PROFILE" 2>/dev/null |
+            awk '/^ *status: /{sub(/^ *status: /, ""); print; exit}')"
+        [[ "$NOTARY_STATUS" == "In Progress" || -z "$NOTARY_STATUS" ]] || break
+        printf '.'
+        NOTARY_DELAY=$(( NOTARY_DELAY * 2 > 300 ? 300 : NOTARY_DELAY * 2 ))
+    done
+    echo
+    if [[ "$NOTARY_STATUS" == "In Progress" ]]; then
+        cat >&2 <<EOF
+error: still queued at Apple after an hour. The upload succeeded, so do NOT
+       rebuild — that submits a second copy of the same file and consumes
+       account capacity for nothing. Resume with:
+
+  xcrun notarytool info $SUBMISSION_ID --keychain-profile "\$SOCIALMCP_NOTARY_PROFILE"
+  xcrun stapler staple $DMG    # once it reads Accepted
+EOF
+        exit 1
+    fi
+    if [[ "$NOTARY_STATUS" != "Accepted" ]]; then
+        echo "error: notarization ended as '${NOTARY_STATUS:-unknown}'" >&2
+        echo "  xcrun notarytool log $SUBMISSION_ID --keychain-profile $SOCIALMCP_NOTARY_PROFILE" >&2
+        exit 1
+    fi
+    echo "==> Accepted"
+
     # Stapling lets the dmg verify offline; without it the first open needs network.
     xcrun stapler staple "$DMG"
     spctl --assess --type open --context context:primary-signature -v "$DMG"

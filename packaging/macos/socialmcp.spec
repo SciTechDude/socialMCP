@@ -124,17 +124,16 @@ app = BUNDLE(  # noqa: F821
         # Not a background app: it shows a dialog and quits.
         "LSBackgroundOnly": False,
         "LSMinimumSystemVersion": "11.0",
-        # The app reads a .zip the user put in their own folder. Declaring this
-        # keeps the Finder prompt comprehensible if the folder is in Downloads
-        # or Documents, which macOS protects.
-        "NSDesktopFolderUsageDescription": (
-            "SocialMCP reads the data export you place in its folder."
-        ),
-        "NSDocumentsFolderUsageDescription": (
-            "SocialMCP reads the data export you place in its folder."
-        ),
-        "NSDownloadsFolderUsageDescription": (
-            "SocialMCP reads the data export you downloaded from LinkedIn."
-        ),
+        # No NSDesktop/NSDocuments/NSDownloads usage descriptions, deliberately.
+        #
+        # They were declared for a flow where the user dragged their export into
+        # the app's folder, and they caused macOS to ask for access to whole
+        # folders — a frightening prompt for a tool that reads your contacts,
+        # for a capability the code never used. The app now opens a file picker
+        # instead: macOS runs it out of process and hands over the single chosen
+        # file, so no folder access is requested and no prompt appears.
+        #
+        # Adding one back means the app is asking for broad file access. Be sure
+        # that is really needed first.
     },
 )
