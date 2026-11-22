@@ -39,8 +39,11 @@ are separate steps, and the second is the one that does the work: dragging only
 copies the app, and nothing sets itself up until you open it. It then finds your
 AI app, connects itself, and asks you to pick your LinkedIn export.
 
-No Python, no terminal, and **no access to your files** — you choose one `.zip`
-and it reads that one file.
+No Python and no terminal. When you pick your export, macOS may ask whether
+SocialMCP can open your Downloads, Desktop or Documents folder — that is macOS
+asking on behalf of the file-chooser, and **you can say no to all of them** and
+drag the `.zip` into the app's own folder instead. Either way it reads only
+that one file, and nothing is uploaded anywhere.
 
 > **Pick the file that matches your Mac.** There are two, and the wrong one
 > will not open at all:
@@ -289,6 +292,20 @@ Where that JSON goes, by client:
 | Continue | `mcpServers` in `~/.continue/config.yaml` |
 | Windsurf, Cline, LibreChat, Goose, … | their own MCP config file, same command |
 | Your own code | `mcp` SDK (Python/TS), Pydantic-AI, LangChain MCP adapters, … |
+
+> **Tested with:** the Mac app has been tested end-to-end with **Claude Code**
+> and **Claude Desktop** only. The other clients are wired up the same way —
+> same command, same JSON — and `socialmcp setup` detects them and writes their
+> config, but nobody has yet confirmed the whole flow on them. If you try one,
+> [say how it went](https://github.com/SciTechDude/socialMCP/discussions); that
+> is the single most useful thing you can report.
+>
+> **Not detected automatically:** OpenAI Codex CLI (`~/.codex/config.toml`),
+> Continue (`~/.continue/config.yaml`) and Goose
+> (`~/.config/goose/config.yaml`) keep their settings in TOML or YAML rather
+> than JSON. SocialMCP will not edit those formats, because doing it without
+> mangling someone's comments and layout is a different job. Add the command
+> below by hand and they work fine.
 
 Check your client's docs for the exact key name — the command and args never
 change. Restart the client afterwards, then ask it to call

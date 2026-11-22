@@ -38,6 +38,12 @@ up to 24 hours. Carry on with Step 2 while you wait.
 
 ## Step 2 — Install SocialMCP
 
+> **Tested with Claude.** The Mac app has been through this whole flow with
+> Claude Code and Claude Desktop. It also detects Cursor, Windsurf, VS Code,
+> Zed, Gemini CLI and Cline and sets them up the same way, but those have not
+> been tested end-to-end yet. If you use one, please
+> [say whether it worked](https://github.com/SciTechDude/socialMCP/discussions).
+
 **On a Mac, this is one download.**
 
 1. [**Download SocialMCP**](https://github.com/SciTechDude/socialMCP/releases)
@@ -75,7 +81,15 @@ Applications installs it but does not run it. Nothing sets itself up until you
 open the app.
 
 There is no Python to set up and no terminal to open — everything it needs is
-inside the app, and it asks for no access to your files. You hand it one file.
+inside the app.
+
+**About the folder-access prompts.** When you pick your export, macOS may ask
+whether SocialMCP can open **Downloads**, **Desktop** or **Documents**. That is
+macOS asking on behalf of the file-chooser window, not SocialMCP reading your
+folders. **Allow only Downloads** if that is where your export is — or refuse
+all three and drag the `.zip` into the app's folder instead, which needs no
+permission at all. SocialMCP reads only the file you give it, and uploads
+nothing, whichever you choose.
 
 <details>
 <summary><b>Windows</b></summary>
