@@ -190,8 +190,17 @@ if [[ "$SIGN" == "1" ]]; then
     # polling separately also means a crashed poll can be retried without
     # re-uploading 24 MB.
     SUBMIT_LOG="$(mktemp)"
+    # `|| true` because notarytool 1.1.3 also crashes with SIGBUS under
+    # --no-wait, *after* printing the submission id — the upload has already
+    # succeeded by then. Letting `set -e` kill the build there is the worst
+    # outcome available: it looks like a failure, so the natural response is to
+    # rebuild and submit a second copy of a file Apple is already notarizing.
+    #
+    # So the exit status is deliberately ignored and the submission id is used
+    # as the success signal instead. No id means nothing reached Apple.
     xcrun notarytool submit "$DMG" \
-        --keychain-profile "$SOCIALMCP_NOTARY_PROFILE" --no-wait | tee "$SUBMIT_LOG"
+        --keychain-profile "$SOCIALMCP_NOTARY_PROFILE" --no-wait \
+        2>&1 | tee "$SUBMIT_LOG" || true
     SUBMISSION_ID="$(awk '/^ *id: /{print $2; exit}' "$SUBMIT_LOG")"
     rm -f "$SUBMIT_LOG"
     [[ -n "$SUBMISSION_ID" ]] || { echo "error: no submission id returned" >&2; exit 1; }
@@ -207,9 +216,13 @@ if [[ "$SIGN" == "1" ]]; then
     while (( NOTARY_WAITED < 3600 )); do        # give up after an hour
         sleep "$NOTARY_DELAY"
         NOTARY_WAITED=$(( NOTARY_WAITED + NOTARY_DELAY ))
+        # `|| true` for the same reason as the submit above: a crashed or
+        # throttled poll must not end the build, because the submission it is
+        # polling is still perfectly good. An empty status is read as "not
+        # finished yet" and simply polled again.
         NOTARY_STATUS="$(xcrun notarytool info "$SUBMISSION_ID" \
             --keychain-profile "$SOCIALMCP_NOTARY_PROFILE" 2>/dev/null |
-            awk '/^ *status: /{sub(/^ *status: /, ""); print; exit}')"
+            awk '/^ *status: /{sub(/^ *status: /, ""); print; exit}' || true)"
         [[ "$NOTARY_STATUS" == "In Progress" || -z "$NOTARY_STATUS" ]] || break
         printf '.'
         NOTARY_DELAY=$(( NOTARY_DELAY * 2 > 300 ? 300 : NOTARY_DELAY * 2 ))
