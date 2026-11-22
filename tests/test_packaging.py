@@ -1768,3 +1768,65 @@ def test_the_documented_button_is_the_button_the_app_shows():
         "the label, the button and the branch should all be the one constant"
     )
     assert '== "Disconnect"' not in source, "a stale literal branch would never match"
+
+
+def test_load_flow_says_a_file_was_already_read_instead_of_claiming_it_loaded(
+    monkeypatch, tmp_path
+):
+    """Picking the same export twice must not be reported as a fresh import.
+
+    The archive is matched by content hash, so "already read" is a certainty,
+    not a guess — and the app used to discard that fact and say "Loaded X.
+    Your network now has N people" regardless. Someone who picked last
+    month's file by mistake, or who expected new people and saw an unchanged
+    count, was told it worked and given nothing to act on.
+    """
+    import zipfile
+
+    app = _load_app_main()
+
+    home = tmp_path / "home"
+    downloads = home / "Downloads"
+    downloads.mkdir(parents=True)
+    monkeypatch.setattr(app.Path, "home", staticmethod(lambda: home))
+
+    export = downloads / "Complete_LinkedInDataExport_11-15-2026.zip"
+    fixtures = Path(__file__).resolve().parent / "fixtures" / "linkedin"
+    with zipfile.ZipFile(export, "w") as archive:
+        for csv in fixtures.glob("*.csv"):
+            archive.write(csv, csv.name)
+
+    said: list[str] = []
+    monkeypatch.setattr(app, "dialog", lambda message, **_k: said.append(message) or "OK")
+
+    import sys as _sys
+
+    module = type(_sys)("ui")
+    module.choose_export = lambda _start=None: export
+    module.archive_suffixes = lambda *_a, **_k: (".zip",)
+    monkeypatch.setitem(_sys.modules, "ui", module)
+
+    from socialmcp.config import Config
+    from socialmcp.core.db import open_database
+
+    appdata = tmp_path / "appdata"
+    config = Config(home=appdata, drop_dir=appdata / "drop-archive")
+    config.ensure_dirs()
+    drop = config.drop_dir / "linkedin"
+
+    assert app.load_flow(config, drop) == 0, said
+    first_count = open_database(config).scalar("select count(*) from contacts")
+    assert first_count > 0
+    said.clear()
+
+    # The same file, offered again — exactly what the chooser defaults to.
+    assert app.load_flow(config, drop) == 0, said
+    message = "\n".join(said)
+
+    assert "already been read" in message, f"should say it was already read: {message!r}"
+    assert "Nothing changed" in message, f"should say nothing changed: {message!r}"
+    assert not message.startswith("Loaded "), (
+        f"must not claim a fresh import: {message!r}"
+    )
+    assert open_database(config).scalar("select count(*) from contacts") == first_count
+    assert export.exists(), "the user's download must still not be moved or deleted"

@@ -398,3 +398,52 @@ def test_extraction_still_rejects_real_escapes(tmp_path: Path):
             z.writestr(bad_name, "nope")
         with pytest.raises(IngestError):
             extract_archive(archive, tmp_path / f"out-{abs(hash(bad_name))}")
+
+
+def test_a_recognised_duplicate_is_filed_away_not_left_in_the_drop_folder(
+    db: Database, config: Config, linkedin_zip: Path
+):
+    """The drop folder means "waiting to be read". A duplicate is not waiting.
+
+    Re-offering an export that is already in the database used to leave it
+    sitting in the drop folder for good, because the move happened after the
+    duplicate check returned. The folder then filled up with exports that
+    looked unprocessed — and its own README promises the opposite: "once read,
+    the file moves to ingested/ so it is not read twice".
+    """
+    import shutil
+
+    dropped = config.drop_dir / "linkedin" / linkedin_zip.name
+    dropped.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(linkedin_zip, dropped)
+
+    first = ingest_path(db, config, dropped)
+    assert not first.skipped_duplicate
+    assert not dropped.exists(), "a processed export should leave the drop folder"
+    filed = config.archive_dir / "linkedin" / linkedin_zip.name
+    assert filed.exists(), "and should arrive in the ingested folder"
+
+    # Offer the very same bytes again, as someone re-picking yesterday's file.
+    again = config.drop_dir / "linkedin" / linkedin_zip.name
+    shutil.copy2(linkedin_zip, again)
+    second = ingest_path(db, config, again)
+
+    assert second.skipped_duplicate, "identical content must still be recognised"
+    assert not again.exists(), (
+        "a duplicate must not be left behind in the drop folder either"
+    )
+    # Filed under a distinct name, so neither copy is destroyed by the other.
+    filed_copies = sorted((config.archive_dir / "linkedin").glob("*.zip"))
+    assert len(filed_copies) == 2, f"expected both copies kept, got {filed_copies}"
+    assert db.scalar("SELECT COUNT(*) FROM contacts") == 12, "and nothing re-imported"
+
+
+def test_a_duplicate_outside_the_drop_folder_is_left_where_it_is(
+    db: Database, config: Config, linkedin_zip: Path
+):
+    """Filing away is for our own folder. A user's own file is never moved."""
+    ingest_path(db, config, linkedin_zip)
+    assert linkedin_zip.exists()
+    second = ingest_path(db, config, linkedin_zip)
+    assert second.skipped_duplicate
+    assert linkedin_zip.exists(), "a file we were merely pointed at stays put"

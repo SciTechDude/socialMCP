@@ -1098,7 +1098,7 @@ def load_flow(config, drop: Path) -> int:
         return result, db.scalar("select count(*) from contacts")
 
     try:
-        _result, contacts = run_with_progress(
+        result, contacts = run_with_progress(
             work, steps=1, intro=f"Reading {target.name} — this stays on your Mac."
         )
     except Exception as exc:  # shown to the user, not swallowed
@@ -1110,6 +1110,24 @@ def load_flow(config, drop: Path) -> int:
             buttons=("OK",),
         )
         return 1
+
+    # Saying "Loaded" for a file that was recognised and skipped is a small lie
+    # with a real cost: someone who picked last month's export by mistake, or
+    # who expected new people and saw the same count, is told it worked and
+    # given nothing to act on. The archive is identified by content hash, so
+    # "already read" is a certainty here, not a guess.
+    if getattr(result, "skipped_duplicate", False):
+        trace(f"load: {target.name} was already read; {contacts} contacts")
+        dialog(
+            f"{target.name} had already been read.\n\n"
+            "Nothing changed — SocialMCP recognised this exact file, so your\n"
+            f"network still has {contacts} people.\n\n"
+            "To add new people, request a fresh export from LinkedIn: Settings\n"
+            "& Privacy → Data Privacy → Get a copy of your data. It arrives by\n"
+            "email, usually within a day.",
+            buttons=("OK",),
+        )
+        return 0
 
     trace(f"load: done, {contacts} contacts")
     dialog(
