@@ -58,6 +58,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="check your setup and explain how to fix problems")
     sub.add_parser("can-do", help="list what SocialMCP can and cannot do")
+    sub.add_parser(
+        "license", help="print the licence, the warranty disclaimer and the privacy terms"
+    )
 
     p_uninstall = sub.add_parser(
         "uninstall", help="disconnect from your AI apps, and optionally delete your data"
@@ -104,6 +107,39 @@ def build_parser() -> argparse.ArgumentParser:
     p_rename.add_argument("new_name")
 
     return parser
+
+
+def _license_text() -> str:
+    """The licence and notice, from wherever this copy happens to live.
+
+    Read at runtime rather than embedded, so the text shown is the text that
+    shipped. In the macOS bundle these sit at the top level of the app; in a
+    source checkout or a pip install they are beside the project root.
+    """
+    import sys
+
+    roots = []
+    if getattr(sys, "frozen", False):
+        # PyInstaller unpacks data files beside the executable.
+        roots.append(Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent)))
+        roots.append(Path(sys.executable).resolve().parent)
+    roots.append(Path(__file__).resolve().parent.parent)
+
+    parts: list[str] = []
+    for name in ("NOTICE", "LICENSE"):
+        for root in roots:
+            candidate = root / name
+            if candidate.is_file():
+                parts.append(candidate.read_text(encoding="utf-8").rstrip())
+                break
+    if not parts:
+        return (
+            "SocialMCP is licensed under the Apache License 2.0 and provided "
+            '"AS IS", without warranties or conditions of any kind.\n'
+            "Full text: http://www.apache.org/licenses/LICENSE-2.0\n"
+            "It collects no analytics and sends no telemetry."
+        )
+    return "\n\n".join(parts)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -297,6 +333,10 @@ def _dispatch(args: argparse.Namespace, config, db) -> int:
 
     if args.command == "doctor":
         return _cmd_doctor(config)
+
+    if args.command == "license":
+        print(_license_text())
+        return 0
 
     if args.command == "can-do":
         from . import capabilities
