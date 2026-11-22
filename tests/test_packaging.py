@@ -1430,6 +1430,8 @@ def test_declining_the_terms_writes_nothing(monkeypatch, tmp_path):
     """Quit means quit: no config touched, no database, no marker."""
     app = _load_app_main()
     monkeypatch.setattr(app, "APP_SUPPORT", tmp_path / "appdata")
+    # Stub the rich sheet too, or the test opens a real window.
+    monkeypatch.setattr(app, "_terms_sheet", lambda: "Quit")
     monkeypatch.setattr(app, "ask", lambda *_a, **_k: "Quit")
 
     assert app.terms_flow() is False
@@ -1450,6 +1452,7 @@ def test_consent_is_recorded_locally_and_asked_only_once(monkeypatch, tmp_path):
         asked.append(message)
         return "Agree and continue"
 
+    monkeypatch.setattr(app, "_terms_sheet", lambda: None)
     monkeypatch.setattr(app, "ask", once)
 
     assert app.terms_flow() is True
@@ -1474,6 +1477,7 @@ def test_changed_terms_are_shown_again(monkeypatch, tmp_path):
     app = _load_app_main()
     appdata = tmp_path / "appdata"
     monkeypatch.setattr(app, "APP_SUPPORT", appdata)
+    monkeypatch.setattr(app, "_terms_sheet", lambda: "Agree and continue")
     monkeypatch.setattr(app, "ask", lambda *_a, **_k: "Agree and continue")
 
     assert app.terms_flow() is True
@@ -1561,3 +1565,110 @@ def test_the_terms_heading_is_not_repeated_in_the_body():
     assert 'title="SocialMCP — Terms of Use"' in source, (
         "the title should carry the heading instead"
     )
+
+
+def test_each_clause_heading_is_bold_and_ends_with_a_colon():
+    """Headings carry the structure, so they must be visually distinct.
+
+    Bold is not reachable through plain dialog text: NSAlert's informative
+    text is a plain string, and JavaScript for Automation does not expose the
+    attributed-string initialisers (tried: initWithString:,
+    initWithString:attributes:, and the NSDictionary constructors are all
+    absent from the bridge). NSTextView's readRTFDFromFile: is exposed, so the
+    clauses are generated as RTF instead.
+    """
+    app = _load_app_main()
+    rtf = app.terms_rtf()
+
+    assert len(app.TERMS_CLAUSES) >= 8, "clauses were lost"
+    for number, (heading, _body) in enumerate(app.TERMS_CLAUSES, 1):
+        marker = rf"\b {number}. {heading}:\b0 "
+        assert marker in rtf, f"clause {number} is not a bold heading: {marker!r}"
+
+    assert rtf.startswith(r"{\rtf1"), "must be a valid RTF document"
+    assert rtf.rstrip().endswith("}"), "RTF document is unterminated"
+
+
+def test_the_rtf_escapes_characters_that_would_corrupt_it():
+    """Braces and backslashes are RTF syntax; non-ASCII needs spelling out."""
+    app = _load_app_main()
+
+    assert app._rtf_escape("a{b}c") == r"a\{b\}c"
+    assert app._rtf_escape("back\\slash") == r"back\\slash"
+    # An em dash or curly quote would otherwise render as mojibake.
+    assert app._rtf_escape("an — dash") == r"an \u8212? dash", (
+        "non-ASCII must become a numeric RTF escape with a fallback character"
+    )
+
+
+def test_the_terms_sheet_shrinks_the_icon_and_scrolls():
+    """A large icon pushes the terms off screen; long terms need scrolling."""
+    app = _load_app_main()
+    script = app.TERMS_SCRIPT
+
+    assert "NSMakeSize(40, 40)" in script, "the default icon is too tall"
+    assert "setHasVerticalScroller(true)" in script, "long terms must scroll"
+    assert "readRTFDFromFile" in script, "bold headings come from RTF"
+    assert "setLevel(8)" in script and "activateIgnoringOtherApps" in script
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="osascript is macOS-only")
+def test_the_terms_script_and_its_rtf_both_load():
+    """Generate the real RTF, hand it to the real script, without drawing."""
+    import subprocess
+    import tempfile
+
+    app = _load_app_main()
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".js", delete=False, encoding="utf-8"
+    ) as handle:
+        handle.write(app.TERMS_SCRIPT)
+        script = handle.name
+    try:
+        result = subprocess.run(
+            ["osascript", "-l", "JavaScript", script, "__selftest__"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    finally:
+        Path(script).unlink(missing_ok=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ok"
+
+    # And the RTF itself parses: TextEdit's converter is what the view uses.
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".rtf", delete=False, encoding="ascii", errors="backslashreplace"
+    ) as handle:
+        handle.write(app.terms_rtf())
+        rtf = handle.name
+    try:
+        probe = subprocess.run(
+            ["textutil", "-convert", "txt", "-stdout", rtf],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    finally:
+        Path(rtf).unlink(missing_ok=True)
+    assert probe.returncode == 0, probe.stderr
+    for heading, _body in app.TERMS_CLAUSES:
+        assert heading in probe.stdout, f"{heading!r} missing once rendered"
+
+
+def test_the_terms_scrollbar_is_always_visible():
+    """A hidden scrollbar hides the fact that there are more clauses.
+
+    macOS overlay scrollers appear only once someone scrolls, so a reader
+    sees the first clauses and no indication that five more follow. For terms
+    specifically, that is the difference between agreeing to what you read
+    and agreeing to what you happened to be shown.
+    """
+    app = _load_app_main()
+    script = app.TERMS_SCRIPT
+
+    assert "setScrollerStyle(0)" in script, "legacy scrollers are always drawn"
+    assert "setAutohidesScrollers(false)" in script, "it must not fade away"
+    assert "setHasVerticalScroller(true)" in script

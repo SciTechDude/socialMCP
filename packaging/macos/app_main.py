@@ -374,21 +374,162 @@ def _alert_via_bridge(
     return answer if answer in buttons else None
 
 
-TERMS = """1. Licence. SocialMCP is free and open-source software licensed under the Apache License, Version 2.0. The full text accompanies this software as LICENSE.txt and may be displayed at any time by running `SocialMCP license`.
+TERMS_CLAUSES: tuple[tuple[str, str], ...] = (
+    (
+        "Licence",
+        "SocialMCP is free and open-source software licensed under the Apache"
+        " License, Version 2.0. The full text accompanies this software as"
+        " LICENSE.txt and may be displayed at any time by running"
+        " `SocialMCP license`.",
+    ),
+    (
+        "No warranty",
+        'THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTY OR CONDITION OF'
+        " ANY KIND, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY"
+        " WARRANTY OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR"
+        " NON-INFRINGEMENT.",
+    ),
+    (
+        "Limitation of liability",
+        "To the maximum extent permitted by applicable law, no author or"
+        " contributor shall be liable for any claim, damages, or other"
+        " liability arising from, out of, or in connection with the software or"
+        " its use.",
+    ),
+    (
+        "Scope of processing",
+        "The software processes only the data export you select, and stores the"
+        " resulting database locally on this computer. It operates without any"
+        " account, sign-in, or server; transmits no analytics or telemetry; and"
+        " does not access any social network, credential, or browser cookie."
+        " Deleting the database removes all data it holds.",
+    ),
+    (
+        "Third-party AI services",
+        "Results the software returns to your AI assistant form part of your"
+        " conversation with that assistant, and are accordingly disclosed to"
+        " its operator (for example Anthropic, OpenAI, or Google) under that"
+        " operator's own terms and privacy policy. Such disclosure is outside"
+        " the control of this software and its authors.",
+    ),
+    (
+        "Outbound requests",
+        "The only network request the software initiates is to an embedding"
+        " service you configure. This defaults to a model running on this"
+        " computer, and may be disabled entirely.",
+    ),
+    (
+        "Configuration of other applications",
+        'Where you so direct, the software adds an entry named "socialmcp" to'
+        " the settings of the AI applications you select, having first created"
+        " a backup of each file it modifies. No such file is modified before"
+        " you make that selection.",
+    ),
+    (
+        "Acceptance",
+        'Selecting "Agree and continue" records your acceptance of these terms'
+        " on this computer. The record is not transmitted.",
+    ),
+)
 
-2. No warranty. THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTY OR CONDITION OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY WARRANTY OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT.
+# The plain-text rendering, used for `SocialMCP license`, for the fallback
+# dialog, and for the acceptance fingerprint.
+TERMS = "\n\n".join(
+    f"{number}. {heading}: {body}"
+    for number, (heading, body) in enumerate(TERMS_CLAUSES, 1)
+)
 
-3. Limitation of liability. To the maximum extent permitted by applicable law, no author or contributor shall be liable for any claim, damages, or other liability arising from, out of, or in connection with the software or its use.
 
-4. Scope of processing. The software processes only the data export you select, and stores the resulting database locally on this computer. It operates without any account, sign-in, or server; transmits no analytics or telemetry; and does not access any social network, credential, or browser cookie. Deleting the database removes all data it holds.
+# A rich-text sheet for the terms, so each clause heading can be bold.
+#
+# Bold is not reachable any other way here: NSAlert's informative text is a
+# plain string, and JavaScript for Automation does not expose the attributed
+# string initialisers at all (initWithString:, initWithString:attributes: and
+# the NSDictionary constructors are all absent from the bridge — tried). What
+# *is* exposed is NSTextView's readRTFDFromFile:, so the clauses are written
+# out as RTF and loaded into a scrolling text view used as the alert's
+# accessory. The scroll view also stops long terms stretching the dialog off
+# the screen.
+TERMS_SCRIPT = r"""
+ObjC.import('Cocoa');
+function run(argv) {
+  if (argv.length === 1 && argv[0] === '__selftest__') return 'ok';
+  const title = argv[0];
+  const rtfPath = argv[1];
+  const agree = argv[2];
+  const quit = argv[3];
 
-5. Third-party AI services. Results the software returns to your AI assistant form part of your conversation with that assistant, and are accordingly disclosed to its operator (for example Anthropic, OpenAI, or Google) under that operator's own terms and privacy policy. Such disclosure is outside the control of this software and its authors.
+  const app = $.NSApplication.sharedApplication;
+  app.setActivationPolicy(0);
+  app.activateIgnoringOtherApps(true);
 
-6. Outbound requests. The only network request the software initiates is to an embedding service you configure. This defaults to a model running on this computer, and may be disabled entirely.
+  const alert = $.NSAlert.alloc.init;
+  alert.setMessageText(title);
+  alert.addButtonWithTitle(agree);
+  alert.addButtonWithTitle(quit);
 
-7. Configuration of other applications. Where you so direct, the software adds an entry named "socialmcp" to the settings of the AI applications you select, having first created a backup of each file it modifies. No such file is modified before you make that selection.
+  // The default icon is drawn large above the heading, pushing the whole
+  // sheet down for no information. Smaller keeps the terms in view.
+  const icon = $.NSImage.imageNamed('NSApplicationIcon');
+  if (icon && !icon.isNil()) {
+    icon.setSize($.NSMakeSize(40, 40));
+    alert.setIcon(icon);
+  }
 
-8. Acceptance. Selecting "Agree and continue" records your acceptance of these terms on this computer. The record is not transmitted."""
+  const W = 560, H = 320;
+  const scroll = $.NSScrollView.alloc.initWithFrame($.NSMakeRect(0, 0, W, H));
+  scroll.setHasVerticalScroller(true);
+  // Legacy scroller style, not autohiding: an overlay scrollbar appears only
+  // once someone scrolls, so a reader has no way of knowing that clauses
+  // continue below. For terms, that is the difference between agreeing to
+  // what you read and agreeing to what you were shown.
+  scroll.setScrollerStyle(0);
+  scroll.setAutohidesScrollers(false);
+  scroll.setBorderType(2);
+  scroll.setDrawsBackground(false);
+  const text = $.NSTextView.alloc.initWithFrame($.NSMakeRect(0, 0, W, H));
+  text.setEditable(false);
+  text.setDrawsBackground(false);
+  if (!text.readRTFDFromFile(rtfPath)) return '__failed__';
+  scroll.setDocumentView(text);
+  alert.setAccessoryView(scroll);
+
+  const win = alert.window;
+  win.setLevel(8);
+  app.activateIgnoringOtherApps(true);
+  win.makeKeyAndOrderFront($());
+  return Number(alert.runModal) === 1000 ? '__agreed__' : '__declined__';
+}
+"""
+
+
+def _rtf_escape(text: str) -> str:
+    """RTF is ASCII with escapes; anything else has to be spelled out."""
+    out: list[str] = []
+    for char in text:
+        if char in "\\{}":
+            out.append("\\" + char)
+        elif ord(char) < 128:
+            out.append(char)
+        else:
+            # \\uN with a replacement character for readers that cannot show it.
+            out.append(f"\\u{ord(char)}?")
+    return "".join(out)
+
+
+def terms_rtf() -> str:
+    """The clauses as RTF, with each heading bold and ending in a colon."""
+    lines = [
+        r"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fswiss Helvetica;}}",
+        r"\fs24",
+    ]
+    for number, (heading, body) in enumerate(TERMS_CLAUSES, 1):
+        lines.append(
+            rf"\b {number}. {_rtf_escape(heading)}:\b0  {_rtf_escape(body)}\par"
+        )
+        lines.append(r"\par")
+    lines.append("}")
+    return "\n".join(lines)
 
 
 def terms_fingerprint() -> str:
@@ -435,6 +576,44 @@ def record_terms_acceptance() -> None:
         pass
 
 
+def _terms_sheet() -> str | None:
+    """Show the terms with bold headings. None if the sheet could not run.
+
+    Returns the same button labels as `ask`, so the caller does not care which
+    implementation answered.
+    """
+    import tempfile
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".rtf", delete=False, encoding="ascii", errors="backslashreplace"
+        ) as handle:
+            handle.write(terms_rtf())
+            rtf_path = handle.name
+    except OSError:
+        return None
+
+    try:
+        result = _run_jxa(
+            TERMS_SCRIPT,
+            ["SocialMCP — Terms of Use", rtf_path, "Agree and continue", "Quit"],
+        )
+    finally:
+        Path(rtf_path).unlink(missing_ok=True)
+
+    if result is None or result.returncode != 0:
+        if result is not None:
+            trace(f"terms: sheet failed ({result.stderr.strip()[:120]})")
+        return None
+    answer = (result.stdout or "").strip()
+    if answer == "__agreed__":
+        return "Agree and continue"
+    if answer == "__declined__":
+        return "Quit"
+    trace(f"terms: sheet returned {answer!r}")
+    return None
+
+
 def terms_flow() -> bool:
     """Show the terms once, before anything else happens. False means quit.
 
@@ -447,11 +626,14 @@ def terms_flow() -> bool:
         return True
 
     trace("terms: asking")
-    answer = ask(
-        TERMS,
-        title="SocialMCP — Terms of Use",
-        buttons=("Quit", "Agree and continue"),
-    )
+    answer = _terms_sheet()
+    if answer is None:
+        trace("terms: rich sheet unavailable, using a plain dialog")
+        answer = ask(
+            TERMS,
+            title="SocialMCP — Terms of Use",
+            buttons=("Quit", "Agree and continue"),
+        )
     if answer != "Agree and continue":
         trace("terms: declined, nothing written")
         return False
