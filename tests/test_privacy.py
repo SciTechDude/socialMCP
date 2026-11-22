@@ -633,3 +633,91 @@ def test_text_file_io_always_states_its_encoding():
         "these read or write text without an explicit encoding, which uses the "
         f"platform default and breaks on Windows: {offenders}"
     )
+
+
+@requires_git
+def test_importing_an_export_writes_only_inside_the_apps_own_folder(tmp_path):
+    """The app may write to its own folder and a temp dir. Nowhere else.
+
+    It holds someone's professional network, so "where does this program write"
+    should be a property with a test, not a claim. The allowed places are the
+    data folder it owns and a temporary extraction directory that is removed
+    again; the only writes outside them belong to connecting an MCP client,
+    which is a separate, explicit step that backs up every file it edits.
+    """
+    import builtins
+    import os
+    import shutil
+    import zipfile
+    from pathlib import Path as _Path
+
+    writes: list[str] = []
+    originals = (
+        builtins.open, os.mkdir, os.makedirs, os.replace, os.rename,
+        shutil.copy2, shutil.move, _Path.write_text, _Path.write_bytes,
+    )
+
+    def note(path):
+        writes.append(str(path))
+
+    def traced_open(file, mode="r", *args, **kwargs):
+        if any(flag in str(mode) for flag in ("w", "a", "x", "+")):
+            note(file)
+        return originals[0](file, mode, *args, **kwargs)
+
+    builtins.open = traced_open
+    os.mkdir = lambda p, *a, **k: (note(p), originals[1](p, *a, **k))[1]
+    os.makedirs = lambda p, *a, **k: (note(p), originals[2](p, *a, **k))[1]
+    os.replace = lambda s, d, **k: (note(d), originals[3](s, d, **k))[1]
+    os.rename = lambda s, d, **k: (note(d), originals[4](s, d, **k))[1]
+    shutil.copy2 = lambda s, d, **k: (note(d), originals[5](s, d, **k))[1]
+    shutil.move = lambda s, d, **k: (note(d), originals[6](s, d, **k))[1]
+    _Path.write_text = lambda self, *a, **k: (note(self), originals[7](self, *a, **k))[1]
+    _Path.write_bytes = lambda self, *a, **k: (note(self), originals[8](self, *a, **k))[1]
+
+    try:
+        from socialmcp.config import Config
+        from socialmcp.core.db import open_database
+        from socialmcp.core.ingest import ingest_path
+
+        home = tmp_path / "appdata"
+        config = Config(home=home, drop_dir=home / "drop-archive")
+        config.ensure_dirs()
+        drop = config.drop_dir / "linkedin"
+        archive = drop / "Export.zip"
+        with zipfile.ZipFile(archive, "w") as bundle:
+            for csv in (REPO / "tests" / "fixtures" / "linkedin").glob("*.csv"):
+                bundle.write(csv, csv.name)
+        ingest_path(open_database(config), config, archive)
+    finally:
+        (
+            builtins.open, os.mkdir, os.makedirs, os.replace, os.rename,
+            shutil.copy2, shutil.move, _Path.write_text, _Path.write_bytes,
+        ) = originals
+
+    assert writes, "nothing was traced, so this test proves nothing"
+
+    import tempfile
+
+    allowed_roots = [
+        str(home.resolve()),
+        str(home),
+        str(_Path(tempfile.gettempdir()).resolve()),
+        tempfile.gettempdir(),
+        "/private/var/folders",  # macOS resolves TMPDIR through here
+        "/var/folders",
+    ]
+    strays = [
+        w
+        for w in writes
+        if not any(str(_Path(w).resolve()).startswith(root) for root in allowed_roots)
+    ]
+    assert not strays, (
+        "the app wrote outside its own folder and the temp dir: "
+        f"{sorted(set(strays))[:10]}"
+    )
+
+    for sensitive in ("Desktop", "Documents", "Downloads"):
+        assert not any(f"/{sensitive}/" in w for w in writes), (
+            f"something was written into the user's {sensitive} folder"
+        )
