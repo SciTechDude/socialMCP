@@ -28,6 +28,13 @@ datas = [
     # schema.sql is read at runtime by core/db.py; import analysis cannot see it.
     (str(REPO / "socialmcp" / "core" / "schema.sql"), "socialmcp/core"),
     (str(REPO / "socialmcp" / "core" / "schema_vec.sql"), "socialmcp/core"),
+    # The licence and notice travel with the binary. The bundle already carried
+    # seventeen licence files belonging to dependencies and none for this
+    # software, which is the wrong way round: the terms someone is actually
+    # relying on should be inside the thing they downloaded. `socialmcp
+    # --license` prints them, and they sit beside the app on the disk image.
+    (str(REPO / "LICENSE"), "."),
+    (str(REPO / "NOTICE"), "."),
 ]
 
 # sqlite-vec is a loadable SQLite extension shipped as vec0.dylib. Without this
@@ -37,9 +44,12 @@ binaries = collect_dynamic_libs("sqlite_vec")
 hiddenimports = [
     # The first-launch progress window. Imported by name from app_main, which
     # PyInstaller's analysis of a sibling module does not always follow.
+    # app_main imports its siblings by bare name, as PyInstaller lays them out
+    # in the bundle. Declared rather than left to import analysis: one of these
+    # missing is an ImportError in a user's hands, not a build failure.
     "progress",
-    "tkinter",
-    "tkinter.ttk",
+    "ui",
+    "applog",
     # Adapters are imported by name from a registry, so nothing references them
     # statically and PyInstaller would otherwise leave them out.
     "socialmcp.adapters.linkedin",
@@ -61,14 +71,14 @@ analysis = Analysis(  # noqa: F821
     hookspath=[],
     runtime_hooks=[],
     excludes=[
-        # No scientific stack; excluding it keeps the bundle to a size people
-        # will actually download.
-        #
-        # tkinter is NOT excluded, despite the size: first launch needs a
-        # progress window before any slow work, because a double-click that
-        # shows nothing reads as broken and a macOS permission prompt from an
-        # app that has not introduced itself reads as suspicious. See
-        # packaging/macos/progress.py.
+        # tkinter is excluded again, and deliberately. A Tk progress window
+        # made macOS prompt for Downloads, Desktop and Documents the moment it
+        # initialised — before any file picker existed — and the osascript-only
+        # build never did. Three permission prompts is an absurd price for a
+        # progress bar in an app whose claim is that it reads one file you hand
+        # it. Tk also drew blank windows without a full mainloop, which does not
+        # fit a step-by-step flow. See packaging/macos/progress.py.
+        "tkinter",
         "numpy",
         "pandas",
         "matplotlib",
@@ -124,16 +134,19 @@ app = BUNDLE(  # noqa: F821
         # Not a background app: it shows a dialog and quits.
         "LSBackgroundOnly": False,
         "LSMinimumSystemVersion": "11.0",
-        # No NSDesktop/NSDocuments/NSDownloads usage descriptions, deliberately.
+        # One declaration, for the one folder the app reads: Downloads.
         #
-        # They were declared for a flow where the user dragged their export into
-        # the app's folder, and they caused macOS to ask for access to whole
-        # folders — a frightening prompt for a tool that reads your contacts,
-        # for a capability the code never used. The app now opens a file picker
-        # instead: macOS runs it out of process and hands over the single chosen
-        # file, so no folder access is requested and no prompt appears.
+        # That is where a browser puts the LinkedIn export, and it is now the
+        # only place SocialMCP looks — no file panel, no watched folder of its
+        # own. macOS asks once, this is the text it shows, and refusing it
+        # simply means no export is found.
         #
-        # Adding one back means the app is asking for broad file access. Be sure
-        # that is really needed first.
+        # Desktop and Documents are deliberately absent: nothing reads them.
+        # They only ever appeared because a file panel enumerated its sidebar,
+        # and removing the panel removed the reason to ask.
+        "NSDownloadsFolderUsageDescription": (
+            "SocialMCP reads the LinkedIn export you downloaded. It reads that "
+            "one file, and nothing is uploaded anywhere."
+        ),
     },
 )

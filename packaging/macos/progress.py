@@ -1,164 +1,95 @@
-"""First-launch progress window.
+"""Progress feedback during first launch, without a GUI toolkit.
 
-Why this exists: setup does several seconds of work — probing for installed AI
-apps, writing their config, creating folders — and all of it used to happen
-before anything appeared on screen. A user who double-clicked the app saw
-nothing at all, and macOS would sometimes raise a folder-permission prompt from
-an application that had not yet explained itself. Silence reads as "broken",
-and an unexplained permission request reads as "suspicious". Both are fatal
-first impressions for software that asks to read your contacts.
+Two findings drove this design, both from testing on a real Mac:
 
-So: a window appears within a second of launch, names each step as it happens,
-and stays frontmost so any permission prompt arrives with visible context.
+1. **Silence reads as broken.** Setup does several seconds of work — probing
+   for installed AI apps, writing their config — and when all of it happened
+   before anything appeared on screen, a double-click looked like it did
+   nothing at all.
 
-Tk is used because it ships with Python and needs no extra dependency. It is
-treated as optional anyway: if the toolkit is missing or no display is
-available, `run_with_progress` still runs the work and simply reports no
-progress, because failing to draw a progress bar must never stop an install.
+2. **Tk is what asked for your folders.** A Tk progress window was the first
+   fix, and it immediately produced macOS prompts for Downloads, Desktop and
+   Documents. Those prompts appeared *before any file picker existed*, and the
+   earlier osascript-only build never produced them. Tk touches the standard
+   folders when it initialises, so for an app whose entire claim is that it
+   reads one file you hand it, bundling Tk costs three alarming permission
+   requests that buy nothing. It also drew blank windows unless a full
+   `mainloop` ran, which does not fit a step-by-step flow.
+
+So progress is reported with `display notification`, which is non-blocking,
+needs no toolkit, and asks for nothing. Each step replaces the last. It is
+less pretty than a progress bar and it is honest about what is happening,
+which is the property that matters here.
 """
 
 from __future__ import annotations
 
 import contextlib
-import queue
-import threading
+import subprocess
 from collections.abc import Callable
 from typing import Any
 
-WINDOW_TITLE = "Setting up SocialMCP"
+TITLE = "SocialMCP"
+
+
+def notify(message: str, *, title: str = TITLE, subtitle: str = "") -> None:
+    """A banner, best-effort. Never raises, never blocks, never prompts."""
+    script = f'display notification {_quote(message)} with title {_quote(title)}'
+    if subtitle:
+        script += f" subtitle {_quote(subtitle)}"
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+
+
+def _quote(text: str) -> str:
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 class ProgressReporter:
-    """What the work function is handed. Safe to call from a worker thread."""
+    """Reports steps as notifications, and remembers them for the caller."""
 
-    def __init__(self, sink: queue.Queue | None, total: int) -> None:
-        self._sink = sink
+    def __init__(self, total: int, *, quiet: bool = False) -> None:
         self._total = max(1, total)
         self._done = 0
+        self._quiet = quiet
+        self.steps: list[str] = []
 
     @property
     def total(self) -> int:
         return self._total
 
     def step(self, label: str) -> None:
-        """Announce the step about to start."""
-        self._emit(("step", label, self._done))
+        self.steps.append(f"step:{label}")
+        if not self._quiet:
+            notify(f"{label}…", subtitle=f"Step {self._done + 1} of {self._total}")
 
     def done(self, label: str) -> None:
-        """Mark a step finished; advances the bar."""
         self._done += 1
-        self._emit(("done", label, self._done))
-
-    def _emit(self, message: tuple[str, str, int]) -> None:
-        if self._sink is not None:
-            self._sink.put(message)
-
-
-def _tk_available() -> bool:
-    try:
-        import tkinter  # noqa: F401
-    except Exception:
-        return False
-    return True
+        self.steps.append(f"done:{label}")
 
 
 def run_with_progress(
     work: Callable[[ProgressReporter], Any],
     *,
     steps: int,
-    title: str = WINDOW_TITLE,
-    intro: str = "This takes a few seconds. Nothing leaves your computer.",
+    title: str = TITLE,
+    intro: str = "",
+    quiet: bool = False,
 ) -> Any:
-    """Run `work` on a worker thread while showing progress.
+    """Run `work`, reporting each step it announces.
 
-    Returns whatever `work` returns, and re-raises whatever it raises, so the
-    caller's error handling is unchanged by the presence of a window.
+    Runs on the calling thread: there is no event loop to keep responsive, and
+    the background thread the Tk version needed is what made Tcl abort the
+    process when a second interpreter appeared.
+
+    Returns whatever `work` returns and re-raises whatever it raises, so error
+    handling is unaffected by how progress is displayed.
     """
-    if not _tk_available():
-        return work(ProgressReporter(None, steps))
-
-    import tkinter as tk
-    from tkinter import ttk
-
-    sink: queue.Queue = queue.Queue()
-    reporter = ProgressReporter(sink, steps)
-    outcome: dict[str, Any] = {}
-
-    def worker() -> None:
-        try:
-            outcome["value"] = work(reporter)
-        except BaseException as exc:
-            outcome["error"] = exc
-
-    try:
-        root = tk.Tk()
-    except Exception:
-        # No display, or Tk present but unusable. The install still matters.
-        return work(ProgressReporter(None, steps))
-
-    root.title(title)
-    root.resizable(False, False)
-    # Frontmost, so a macOS permission prompt triggered by the work below
-    # appears over an app the user can see and identify.
-    root.lift()
-    root.attributes("-topmost", True)
-    with contextlib.suppress(Exception):
-        # Not all window managers allow forcing focus; the window is already
-        # raised, so losing this is cosmetic.
-        root.focus_force()
-
-    frame = ttk.Frame(root, padding=20)
-    frame.grid(sticky="nsew")
-
-    ttk.Label(frame, text=title, font=("", 15, "bold")).grid(sticky="w")
-    ttk.Label(frame, text=intro, wraplength=380, foreground="#555").grid(
-        sticky="w", pady=(4, 12)
-    )
-
-    bar = ttk.Progressbar(frame, mode="determinate", maximum=steps, length=380)
-    bar.grid(sticky="we")
-
-    current = ttk.Label(frame, text="Starting…", wraplength=380)
-    current.grid(sticky="w", pady=(8, 0))
-
-    log = ttk.Label(frame, text="", wraplength=380, justify="left", foreground="#2e7d32")
-    log.grid(sticky="w", pady=(8, 0))
-
-    completed: list[str] = []
-
-    def drain() -> None:
-        try:
-            while True:
-                kind, label, count = sink.get_nowait()
-                if kind == "step":
-                    current.configure(text=f"{label}…")
-                else:
-                    completed.append(label)
-                    bar.configure(value=count)
-                    log.configure(text="\n".join(f"✓ {item}" for item in completed[-4:]))
-        except queue.Empty:
-            pass
-
-        if thread.is_alive():
-            root.after(80, drain)
-        else:
-            drain_final()
-
-    def drain_final() -> None:
-        bar.configure(value=steps)
-        current.configure(text="Done")
-        # Let the completed state register visually rather than vanishing.
-        root.after(400, root.destroy)
-
-    thread = threading.Thread(target=worker, daemon=True)
-    thread.start()
-    root.after(80, drain)
-
-    try:
-        root.mainloop()
-    finally:
-        thread.join(timeout=120)
-
-    if "error" in outcome:
-        raise outcome["error"]
-    return outcome.get("value")
+    if not quiet:
+        notify(intro or "Setting up… this takes a few seconds.", title=title)
+    return work(ProgressReporter(steps, quiet=quiet))

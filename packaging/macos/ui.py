@@ -1,125 +1,176 @@
-"""Windows the app shows after setup: the summary, and picking an export.
+"""Choosing the export file.
 
-Two reasons this is not AppleScript like the rest of the dialogs:
+The panel opens in Downloads, because that is where a browser puts the
+archive, and it only offers archives — picking a PDF or a photo cannot be a
+useful answer, and letting someone select one only to be told it failed is a
+worse experience than not offering it.
 
-1. `display dialog` supports at most three buttons. The summary can legitimately
-   offer four (replace another install, get Ollama, disconnect, open the
-   folder), and when it does, osascript errors and the caller cannot tell —
-   which read as a button pressing itself.
+Types are mapped per source rather than hardcoded. There is one source today,
+and when there are several (Instagram, X, and so on) each brings its own
+archive format: the mapping below is where that lives, and it should move
+beside the adapters once more than one of them exists.
 
-2. Getting a LinkedIn export into the app used to mean opening the drop folder
-   and dragging a file in from Downloads, across two Finder windows. A file
-   picker is one click, and because macOS picks files out of process, it needs
-   no folder permission at all: the app receives the one file chosen and
-   nothing else.
-
-Tk is already bundled for the first-launch progress window, so this adds no
-dependency. It is still optional: callers fall back to AppleScript if Tk
-cannot start.
+Worth recording why this is a plain `choose file` and not a window of our own.
+A Tk file dialog was tried and reverted: it drew blank without a full event
+loop, and bundling Tk cost 3 MB for a progress bar. The permission prompts
+that appeared alongside it were never its fault — they came from
+`claude mcp list`, which Claude Code answers by launching every configured MCP
+server, and macOS attributes a child's file access to the responsible parent.
+See socialmcp/clients.py.
 """
 
 from __future__ import annotations
 
-import contextlib
+import subprocess
 from pathlib import Path
 
+# What each source's export looks like on disk. The AppleScript panel takes
+# uniform type identifiers; the suffixes are the second check, applied after a
+# choice is made, because a panel filter is a convenience and not a guarantee.
+# An NSOpenPanel, driven through the Objective-C bridge. AppleScript's
+# `choose file` is simpler but exposes no control over folders: clicking a
+# subfolder *selected* it, and the app then had to refuse it with an error —
+# the user's click was treated as an answer rather than as navigation. Here
+# `canChooseDirectories` is false, so folders open and only files can be
+# chosen, which is how every Mac open panel behaves.
+PANEL_SCRIPT = r"""
+ObjC.import('Cocoa');
+function run(argv) {
+  if (argv.length === 1 && argv[0] === '__selftest__') return 'ok';
+  const start = argv[0];
+  const message = argv[1];
+  const types = argv.slice(2);
 
-def tk_available() -> bool:
-    try:
-        import tkinter  # noqa: F401
-    except Exception:
-        return False
-    return True
+  // Same activation dance as the alerts: a background tool cannot come to
+  // the front, so the process adopts a regular policy and the panel is
+  // raised above normal windows explicitly.
+  const app = $.NSApplication.sharedApplication;
+  app.setActivationPolicy(0);
+  app.activateIgnoringOtherApps(true);
+
+  const panel = $.NSOpenPanel.openPanel;
+  panel.setCanChooseFiles(true);
+  panel.setCanChooseDirectories(false);    // folders navigate, never select
+  panel.setAllowsMultipleSelection(false);
+  panel.setTreatsFilePackagesAsDirectories(true);
+  panel.setShowsHiddenFiles(false);
+  panel.setMessage(message);
+  panel.setPrompt('Open');
+  panel.setDirectoryURL($.NSURL.fileURLWithPath(start));
+  panel.setAllowedFileTypes($(types));
+  panel.setLevel(8);
+  app.activateIgnoringOtherApps(true);
+
+  if (Number(panel.runModal) !== 1) return '__cancelled__';   // NSModalResponseOK
+  return ObjC.unwrap(panel.URL.path);
+}
+"""
 
 
-def choose_export(initial_dir: Path | None = None) -> Path | None:
-    """Native open panel, starting wherever downloads land.
+SOURCE_ARCHIVES: dict[str, dict[str, object]] = {
+    "linkedin": {
+        "label": "LinkedIn",
+        "types": ("public.zip-archive", "com.pkware.zip-archive", "zip"),
+        "suffixes": (".zip",),
+    },
+}
 
-    Returns None if the user cancels or no toolkit is available. Only the
-    chosen file becomes readable by this app, which is why this is preferred
-    over asking for access to a whole folder.
+DEFAULT_SOURCE = "linkedin"
+
+
+def archive_suffixes(source: str = DEFAULT_SOURCE) -> tuple[str, ...]:
+    """File endings a source's export may have."""
+    entry = SOURCE_ARCHIVES.get(source, SOURCE_ARCHIVES[DEFAULT_SOURCE])
+    return tuple(entry["suffixes"])  # type: ignore[arg-type]
+
+
+def choose_export(
+    initial_dir: Path | None = None, *, source: str = DEFAULT_SOURCE
+) -> Path | None:
+    """Open a file panel for one source's export. None if cancelled.
+
+    `default location` must be a folder that exists. Given a file or a missing
+    path the panel ignores it and restores whatever it showed last — usually
+    Recents, a column view of `/private/var` temporary paths that tells the
+    user nothing about where they are.
     """
-    if not tk_available():
-        return None
-    import tkinter as tk
-    from tkinter import filedialog
+    entry = SOURCE_ARCHIVES.get(source, SOURCE_ARCHIVES[DEFAULT_SOURCE])
+    label = entry["label"]
+    types = ", ".join(f'"{kind}"' for kind in entry["types"])  # type: ignore[union-attr]
 
+    candidate = Path(initial_dir) if initial_dir else Path.home() / "Downloads"
+    if candidate.is_file():
+        candidate = candidate.parent
+    if not candidate.is_dir():
+        candidate = Path.home() / "Downloads"
+    if not candidate.is_dir():
+        candidate = Path.home()
+
+    chosen = _panel_via_bridge(candidate, label, entry["types"])  # type: ignore[arg-type]
+    if chosen is not None:
+        return chosen if chosen != Path("__cancelled__") else None
+
+    # Fallback: AppleScript. Folders are selectable here, which the caller has
+    # to cope with, but a usable panel beats none.
+    script = (
+        # Activate first, or the panel can open behind the frontmost app.
+        "activate\n"
+        "set chosen to choose file with prompt "
+        f'"Choose your {label} export (the .zip, exactly as you downloaded it)"'
+        f' default location (POSIX file "{candidate}")'
+        f" of type {{{types}}}\n"
+        "POSIX path of chosen"
+    )
     try:
-        root = tk.Tk()
-    except Exception:
-        return None
-    root.withdraw()
-    with contextlib.suppress(Exception):
-        root.attributes("-topmost", True)
-    start = str(initial_dir or (Path.home() / "Downloads"))
-    try:
-        chosen = filedialog.askopenfilename(
-            parent=root,
-            title="Choose your LinkedIn data export",
-            initialdir=start,
-            # The export is a .zip as downloaded. Extracted folders work too,
-            # but a picker cannot offer both, and the zip is what people have.
-            filetypes=[("LinkedIn export (.zip)", "*.zip"), ("All files", "*")],
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=900,
         )
-    finally:
-        with contextlib.suppress(Exception):
-            root.destroy()
-    return Path(chosen) if chosen else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        # Cancelling raises AppleScript error -128, which is not a failure.
+        return None
+    path = (result.stdout or "").strip()
+    return Path(path) if path else None
 
 
-def summary_window(
-    message: str,
-    *,
-    buttons: tuple[str, ...],
-    title: str = "SocialMCP",
-) -> str | None:
-    """Show the setup summary. Returns the button pressed, or None if no Tk.
+def _panel_via_bridge(
+    start: Path, label: str, types: tuple[str, ...]
+) -> Path | None:
+    """NSOpenPanel via osascript. None if it could not run at all.
 
-    Buttons are laid out in the order given, with the last as the default, to
-    match the AppleScript behaviour this replaces.
+    Returns `Path("__cancelled__")` for an explicit cancel, so the caller can
+    tell "the user said no" from "this mechanism is unavailable" — only the
+    second should fall through to another implementation.
     """
-    if not tk_available():
-        return None
-    import tkinter as tk
-    from tkinter import ttk
+    import tempfile
 
+    message = f"Choose your {label} export (the .zip, exactly as you downloaded it)"
     try:
-        root = tk.Tk()
-    except Exception:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".js", delete=False, encoding="utf-8"
+        ) as handle:
+            handle.write(PANEL_SCRIPT)
+            script_path = handle.name
+        try:
+            result = subprocess.run(
+                ["osascript", "-l", "JavaScript", script_path, str(start), message, *types],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=900,
+            )
+        finally:
+            Path(script_path).unlink(missing_ok=True)
+    except (OSError, subprocess.SubprocessError):
         return None
-
-    root.title(title)
-    root.resizable(False, False)
-    root.lift()
-    with contextlib.suppress(Exception):
-        root.attributes("-topmost", True)
-        root.focus_force()
-
-    chosen: dict[str, str] = {}
-
-    frame = ttk.Frame(root, padding=20)
-    frame.grid(sticky="nsew")
-
-    body = tk.Text(frame, wrap="word", width=62, height=min(22, message.count("\n") + 4),
-                   relief="flat", highlightthickness=0, borderwidth=0)
-    body.insert("1.0", message)
-    body.configure(state="disabled", background=root.cget("background"))
-    body.grid(sticky="we")
-
-    row = ttk.Frame(frame)
-    row.grid(sticky="e", pady=(16, 0))
-
-    def pick(label: str) -> None:
-        chosen["value"] = label
-        root.destroy()
-
-    for index, label in enumerate(buttons):
-        style = "Accent.TButton" if index == len(buttons) - 1 else "TButton"
-        ttk.Button(row, text=label, style=style, command=lambda b=label: pick(b)).grid(
-            row=0, column=index, padx=(8, 0)
-        )
-
-    root.protocol("WM_DELETE_WINDOW", lambda: pick(buttons[-1]))
-    root.bind("<Return>", lambda _event: pick(buttons[-1]))
-    root.mainloop()
-    return chosen.get("value", buttons[-1])
+    if result.returncode != 0:
+        return None
+    answer = (result.stdout or "").strip()
+    if answer == "__cancelled__":
+        return Path("__cancelled__")
+    return Path(answer) if answer else None
