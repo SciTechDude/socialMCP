@@ -237,11 +237,24 @@ if [[ "$SIGN" == "1" ]]; then
     if [[ "$NOTARY_STATUS" == "In Progress" ]]; then
         cat >&2 <<EOF
 error: still queued at Apple after three hours. The upload succeeded, so do
-       NOT rebuild — that submits a second copy of the same file and consumes
-       account capacity for nothing. Resume with:
+       NOT rebuild yet — that submits a second copy of the same file and
+       consumes account capacity for nothing. Ask Apple first:
 
   xcrun notarytool info $SUBMISSION_ID --keychain-profile "\$SOCIALMCP_NOTARY_PROFILE"
-  xcrun stapler staple $DMG    # once it reads Accepted
+
+       Then read the answer carefully, because it decides what to do next:
+
+  "status: Accepted"        -> xcrun stapler staple $DMG
+  "status: In Progress"     -> still working; wait and ask again
+  "Submission does not
+   exist or does not
+   belong to your team"     -> Apple purged it. Observed more than once on
+                              this account: a submission that stalls for
+                              hours is dropped rather than finished, with no
+                              log and no rejection reason. Rebuilding IS the
+                              right move now — but bump the version first,
+                              so the new binary cannot be confused with the
+                              one this dmg already is.
 EOF
         exit 1
     fi
