@@ -1830,3 +1830,125 @@ def test_load_flow_says_a_file_was_already_read_instead_of_claiming_it_loaded(
     )
     assert open_database(config).scalar("select count(*) from contacts") == first_count
     assert export.exists(), "the user's download must still not be moved or deleted"
+
+
+def _dmg_settings():
+    """Load the dmgbuild settings file as a module, without dmgbuild."""
+    import importlib.util
+
+    path = REPO / "packaging" / "macos" / "dmg_settings.py"
+    spec = importlib.util.spec_from_file_location("dmg_settings", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_install_window_background_matches_the_window_it_is_shown_in():
+    """A background sized differently from the window is cropped or tiled.
+
+    Both numbers are chosen by hand in two different files and nothing at
+    build time complains when they disagree — the image simply sits wrong and
+    the arrow stops pointing at anything.
+    """
+    settings = _dmg_settings()
+    (_origin, (width, height)) = settings.window_rect
+
+    script = (REPO / "packaging" / "macos" / "dmg_background.js").read_text(encoding="utf-8")
+    drawn_w = int(re.search(r"const W = (\d+);", script).group(1))
+    drawn_h = int(re.search(r"const H = (\d+);", script).group(1))
+
+    assert (drawn_w, drawn_h) == (width, height), (
+        f"background is {drawn_w}x{drawn_h} but the window is {width}x{height}"
+    )
+
+
+def test_the_arrow_points_from_the_app_to_the_applications_folder():
+    """The arrow is only instruction if it runs between the two icons.
+
+    Icon positions live in the dmgbuild settings and the arrow is drawn in a
+    separate script, so this is the one check that they describe the same
+    picture. Without it, moving an icon leaves an arrow pointing at nothing.
+    """
+    settings = _dmg_settings()
+    script = (REPO / "packaging" / "macos" / "dmg_background.js").read_text(encoding="utf-8")
+
+    app_x, app_y = settings.icon_locations[settings.application]
+    apps_x, apps_y = settings.icon_locations["Applications"]
+    assert app_x < apps_x, "the app should sit left of the Applications folder"
+    assert app_y == apps_y, "both icons should be at the same height"
+
+    height = settings.window_rect[1][1]
+    # The script works in a bottom-left origin; the icons are placed from the
+    # top. Same line on screen means these two must sum to the window height.
+    arrow_y = int(re.search(r"const arrowY = H - (\d+);", script).group(1))
+    assert arrow_y == app_y, (
+        f"arrow drawn at {arrow_y} from the top, icons at {app_y}"
+    )
+
+    xs = [int(m) for m in re.findall(r"NSMakePoint\((\d+),", script)]
+    assert xs, "expected the arrow geometry to be readable"
+    assert min(xs) > app_x, f"arrow starts at {min(xs)}, left of the app icon at {app_x}"
+    assert max(xs) < apps_x, (
+        f"arrow ends at {max(xs)}, past the Applications icon at {apps_x}"
+    )
+    assert height == 400 or height > 0  # geometry sanity, not a magic number
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="draws with AppKit")
+def test_the_background_image_actually_renders(tmp_path):
+    """It is drawn by a script, so run it rather than trusting it.
+
+    Two silent failures were found this way: an assignment to
+    `currentContext` that the bridge ignores, producing a blank image, and a
+    paragraph style that pushed the text off the edge. Neither raised.
+    """
+    import subprocess
+
+    out = tmp_path / "background.png"
+    script = REPO / "packaging" / "macos" / "dmg_background.js"
+    result = subprocess.run(
+        ["osascript", "-l", "JavaScript", str(script), str(out), "9.9.9"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert out.is_file() and out.stat().st_size > 5000, "suspiciously small image"
+
+    header = out.read_bytes()[:24]
+    assert header[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG"
+    width = int.from_bytes(header[16:20], "big")
+    height = int.from_bytes(header[20:24], "big")
+
+    settings = _dmg_settings()
+    (_origin, (points_w, points_h)) = settings.window_rect
+    # Drawn at 2x so it is sharp on a Retina display.
+    assert (width, height) == (points_w * 2, points_h * 2), f"{width}x{height}"
+
+    # Not blank: a uniform image compresses far smaller than a drawn one.
+    assert out.stat().st_size > 20000, (
+        "image is probably blank — drawing silently went nowhere once before"
+    )
+
+
+def test_the_disk_image_is_laid_out_without_driving_finder():
+    """Automating Finder would make a release build ask for permission.
+
+    That prompt appears mid-build, applies to the whole machine rather than
+    this build, and is the same category of surprise the first-run work spent
+    a long time removing. dmgbuild writes the .DS_Store directly instead.
+    """
+    build = (REPO / "packaging" / "macos" / "build.sh").read_text(encoding="utf-8")
+    assert "dmgbuild" in build, "the dmg should be laid out, not just archived"
+    assert "dmg_settings.py" in build
+    assert "dmg_background.js" in build
+
+    lowered = build.lower()
+    for forbidden in ('tell application "finder"', "tell app \"finder\"", "osascript -e 'tell"):
+        assert forbidden not in lowered, f"build.sh drives Finder: {forbidden!r}"
+
+    pyproject = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+    assert "dmgbuild" in pyproject, "the build dependency should be declared"
+    # Build-time only: it must not reach the shipped application.
+    runtime = pyproject.split("dependencies = [", 1)[1].split("]", 1)[0]
+    assert "dmgbuild" not in runtime, "dmgbuild is not a runtime dependency"

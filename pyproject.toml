@@ -33,8 +33,15 @@ dev = [
     "ruff>=0.6",
 ]
 # Only needed to build the macOS app bundle; not a runtime dependency.
+#
+# dmgbuild lays out the disk-image window (background, icon positions, window
+# size) by writing the .DS_Store directly. The usual alternative is to mount
+# the image and drive Finder over AppleScript, which needs Automation
+# permission and so interrupts a release build with a consent prompt — the
+# exact class of surprise this app exists to avoid.
 package = [
     "pyinstaller>=6.6",
+    "dmgbuild>=1.6",
 ]
 
 [project.scripts]
