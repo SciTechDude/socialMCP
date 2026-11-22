@@ -517,12 +517,23 @@ def _rtf_escape(text: str) -> str:
     return "".join(out)
 
 
-def terms_rtf() -> str:
-    """The clauses as RTF, with each heading bold and ending in a colon."""
+def terms_rtf(*, updated: bool = False) -> str:
+    """The clauses as RTF, with each heading bold and ending in a colon.
+
+    `updated` prepends a notice. Being asked again with no explanation looks
+    like the app forgot; saying the terms changed is both clearer and the
+    reason the question is being put a second time.
+    """
     lines = [
         r"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fswiss Helvetica;}}",
         r"\fs24",
     ]
+    if updated:
+        lines.append(
+            r"\b These terms have changed since you last agreed to them.\b0"
+            r"  Please review them again.\par"
+        )
+        lines.append(r"\par")
     for number, (heading, body) in enumerate(TERMS_CLAUSES, 1):
         lines.append(
             rf"\b {number}. {_rtf_escape(heading)}:\b0  {_rtf_escape(body)}\par"
@@ -539,34 +550,83 @@ def terms_fingerprint() -> str:
     return hashlib.sha256(TERMS.encode("utf-8")).hexdigest()[:16]
 
 
-def terms_accepted() -> bool:
-    """Has this wording been accepted on this Mac?"""
-    marker = APP_SUPPORT / "accepted-terms.json"
-    try:
-        import json
+def _terms_record() -> dict:
+    """What has been accepted on this Mac, if anything."""
+    import json
 
-        record = json.loads(marker.read_text(encoding="utf-8"))
+    try:
+        return json.loads(
+            (APP_SUPPORT / "accepted-terms.json").read_text(encoding="utf-8")
+        )
     except (OSError, ValueError):
+        return {}
+
+
+def terms_accepted() -> bool:
+    """Has *this* wording been accepted on this Mac?
+
+    The fingerprint covers the text itself, so any change to the terms —
+    not merely a version number someone remembered to bump — requires a fresh
+    acceptance. That is deliberate: re-consent should follow the words the
+    user is actually agreeing to.
+    """
+    record = _terms_record()
+    if record.get("fingerprint") == terms_fingerprint():
+        return True
+    # Older records, and the acceptance history added later.
+    return any(
+        entry.get("fingerprint") == terms_fingerprint()
+        for entry in record.get("accepted", [])
+    )
+
+
+def terms_changed_since_last_accepted() -> bool:
+    """True when something was accepted before, but not this wording.
+
+    Distinguishes a first run from an update, so the user can be told which
+    they are looking at rather than left wondering why they are being asked
+    again.
+    """
+    record = _terms_record()
+    if not record:
         return False
-    return record.get("fingerprint") == terms_fingerprint()
+    return not terms_accepted()
 
 
 def record_terms_acceptance() -> None:
-    """Remember the acceptance, so it is asked once rather than every launch."""
+    """Append this acceptance to the local record.
+
+    Kept as a list rather than overwritten, so which wording was accepted and
+    when remains answerable after the terms change. Nothing here is
+    transmitted; it exists so the question "what did I agree to, and when?"
+    has an answer on the user's own machine.
+    """
     import datetime
     import json
 
+    record = _terms_record()
+    history = list(record.get("accepted", []))
+    if "fingerprint" in record and not history:
+        # Carry an older single-entry record forward rather than losing it.
+        history.append(
+            {
+                "fingerprint": record["fingerprint"],
+                "accepted_at": record.get("accepted_at", "unknown"),
+            }
+        )
+    history.append(
+        {
+            "fingerprint": terms_fingerprint(),
+            "accepted_at": datetime.datetime.now()
+            .astimezone()
+            .isoformat(timespec="seconds"),
+        }
+    )
     try:
         APP_SUPPORT.mkdir(parents=True, exist_ok=True)
         (APP_SUPPORT / "accepted-terms.json").write_text(
             json.dumps(
-                {
-                    "fingerprint": terms_fingerprint(),
-                    "accepted_at": datetime.datetime.now()
-                    .astimezone()
-                    .isoformat(timespec="seconds"),
-                },
-                indent=2,
+                {"fingerprint": terms_fingerprint(), "accepted": history}, indent=2
             )
             + "\n",
             encoding="utf-8",
@@ -576,7 +636,7 @@ def record_terms_acceptance() -> None:
         pass
 
 
-def _terms_sheet() -> str | None:
+def _terms_sheet(*, updated: bool = False) -> str | None:
     """Show the terms with bold headings. None if the sheet could not run.
 
     Returns the same button labels as `ask`, so the caller does not care which
@@ -588,15 +648,19 @@ def _terms_sheet() -> str | None:
         with tempfile.NamedTemporaryFile(
             "w", suffix=".rtf", delete=False, encoding="ascii", errors="backslashreplace"
         ) as handle:
-            handle.write(terms_rtf())
+            handle.write(terms_rtf(updated=updated))
             rtf_path = handle.name
     except OSError:
         return None
 
     try:
+        title = (
+            "SocialMCP — Terms of Use (updated)"
+            if updated
+            else "SocialMCP — Terms of Use"
+        )
         result = _run_jxa(
-            TERMS_SCRIPT,
-            ["SocialMCP — Terms of Use", rtf_path, "Agree and continue", "Quit"],
+            TERMS_SCRIPT, [title, rtf_path, "Agree and continue", "Quit"]
         )
     finally:
         Path(rtf_path).unlink(missing_ok=True)
@@ -625,13 +689,20 @@ def terms_flow() -> bool:
         trace("terms: already accepted")
         return True
 
-    trace("terms: asking")
-    answer = _terms_sheet()
+    updated = terms_changed_since_last_accepted()
+    trace(f"terms: asking (updated={updated})")
+    answer = _terms_sheet(updated=updated)
     if answer is None:
         trace("terms: rich sheet unavailable, using a plain dialog")
+        preamble = (
+            "These terms have changed since you last agreed to them. Please"
+            " review them again.\n\n"
+            if updated
+            else ""
+        )
         answer = ask(
-            TERMS,
-            title="SocialMCP — Terms of Use",
+            preamble + TERMS,
+            title="SocialMCP — Terms of Use" + (" (updated)" if updated else ""),
             buttons=("Quit", "Agree and continue"),
         )
     if answer != "Agree and continue":

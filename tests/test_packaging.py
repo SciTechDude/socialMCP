@@ -1431,7 +1431,7 @@ def test_declining_the_terms_writes_nothing(monkeypatch, tmp_path):
     app = _load_app_main()
     monkeypatch.setattr(app, "APP_SUPPORT", tmp_path / "appdata")
     # Stub the rich sheet too, or the test opens a real window.
-    monkeypatch.setattr(app, "_terms_sheet", lambda: "Quit")
+    monkeypatch.setattr(app, "_terms_sheet", lambda **_k: "Quit")
     monkeypatch.setattr(app, "ask", lambda *_a, **_k: "Quit")
 
     assert app.terms_flow() is False
@@ -1452,7 +1452,7 @@ def test_consent_is_recorded_locally_and_asked_only_once(monkeypatch, tmp_path):
         asked.append(message)
         return "Agree and continue"
 
-    monkeypatch.setattr(app, "_terms_sheet", lambda: None)
+    monkeypatch.setattr(app, "_terms_sheet", lambda **_k: None)
     monkeypatch.setattr(app, "ask", once)
 
     assert app.terms_flow() is True
@@ -1463,9 +1463,13 @@ def test_consent_is_recorded_locally_and_asked_only_once(monkeypatch, tmp_path):
 
     record = json.loads(marker.read_text(encoding="utf-8"))
     assert record["fingerprint"] == app.terms_fingerprint()
-    assert "accepted_at" in record
+    # Acceptances are kept as a list, so which wording was agreed and when
+    # stays answerable after the terms change.
+    assert record["accepted"][-1]["fingerprint"] == app.terms_fingerprint()
+    assert "accepted_at" in record["accepted"][-1]
     # Nothing resembling an identifier, because this is never transmitted.
-    assert set(record) == {"fingerprint", "accepted_at"}, record
+    assert set(record) == {"fingerprint", "accepted"}, record
+    assert set(record["accepted"][-1]) == {"fingerprint", "accepted_at"}
 
     # Second launch: no question.
     assert app.terms_flow() is True
@@ -1477,7 +1481,7 @@ def test_changed_terms_are_shown_again(monkeypatch, tmp_path):
     app = _load_app_main()
     appdata = tmp_path / "appdata"
     monkeypatch.setattr(app, "APP_SUPPORT", appdata)
-    monkeypatch.setattr(app, "_terms_sheet", lambda: "Agree and continue")
+    monkeypatch.setattr(app, "_terms_sheet", lambda **_k: "Agree and continue")
     monkeypatch.setattr(app, "ask", lambda *_a, **_k: "Agree and continue")
 
     assert app.terms_flow() is True
@@ -1672,3 +1676,50 @@ def test_the_terms_scrollbar_is_always_visible():
     assert "setScrollerStyle(0)" in script, "legacy scrollers are always drawn"
     assert "setAutohidesScrollers(false)" in script, "it must not fade away"
     assert "setHasVerticalScroller(true)" in script
+
+
+def test_a_user_is_told_when_the_terms_have_changed(monkeypatch, tmp_path):
+    """Being asked again without explanation looks like the app forgot."""
+    app = _load_app_main()
+    appdata = tmp_path / "appdata"
+    monkeypatch.setattr(app, "APP_SUPPORT", appdata)
+
+    # Nothing accepted yet: a first run, not an update.
+    assert app.terms_changed_since_last_accepted() is False
+
+    monkeypatch.setattr(app, "_terms_sheet", lambda **_k: "Agree and continue")
+    assert app.terms_flow() is True
+    assert app.terms_changed_since_last_accepted() is False
+
+    # Reword the terms: now it is an update.
+    monkeypatch.setattr(app, "TERMS", app.TERMS + "\n\n9. New clause: something.")
+    assert app.terms_accepted() is False
+    assert app.terms_changed_since_last_accepted() is True
+
+    assert "These terms have changed" in app.terms_rtf(updated=True)
+    assert "These terms have changed" not in app.terms_rtf()
+
+
+def test_every_acceptance_is_kept_not_overwritten(monkeypatch, tmp_path):
+    """Which wording was accepted, and when, stays answerable afterwards."""
+    app = _load_app_main()
+    appdata = tmp_path / "appdata"
+    monkeypatch.setattr(app, "APP_SUPPORT", appdata)
+    monkeypatch.setattr(app, "_terms_sheet", lambda **_k: "Agree and continue")
+
+    assert app.terms_flow() is True
+    first = app.terms_fingerprint()
+
+    monkeypatch.setattr(app, "TERMS", app.TERMS + "\n\n9. New clause: something.")
+    assert app.terms_flow() is True
+
+    import json
+
+    record = json.loads((appdata / "accepted-terms.json").read_text(encoding="utf-8"))
+    fingerprints = [entry["fingerprint"] for entry in record["accepted"]]
+    assert first in fingerprints, "the earlier acceptance must survive"
+    assert app.terms_fingerprint() in fingerprints
+    assert len(record["accepted"]) == 2
+    # Still local, still free of identifiers.
+    for entry in record["accepted"]:
+        assert set(entry) == {"fingerprint", "accepted_at"}, entry
