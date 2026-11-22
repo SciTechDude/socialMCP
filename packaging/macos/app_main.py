@@ -160,6 +160,17 @@ function run(argv) {
   const alert = $.NSAlert.alloc.init;
   alert.setMessageText(title);
   alert.setInformativeText(message);
+
+  // NSAlert has no width API and sizes itself narrowly, which turns long
+  // paragraphs into a tall ribbon of text. An accessory view of fixed width
+  // and no height is the usual way to widen it: the text then wraps to a
+  // comfortable measure. Text is passed unwrapped for the same reason —
+  // hard line breaks fight the system's wrapping and leave ragged gaps
+  // mid-sentence.
+  const WIDTH = message.length > 600 ? 520 : 400;
+  alert.setAccessoryView(
+    $.NSView.alloc.initWithFrame($.NSMakeRect(0, 0, WIDTH, 1))
+  );
   // NSAlert draws the first button added as the rightmost default, which is
   // the opposite of the order callers pass, so they go on in reverse.
   for (let i = buttons.length - 1; i >= 0; i--) alert.addButtonWithTitle(buttons[i]);
@@ -363,47 +374,21 @@ def _alert_via_bridge(
     return answer if answer in buttons else None
 
 
-TERMS = """SocialMCP — Terms of Use
+TERMS = """1. Licence. SocialMCP is free and open-source software licensed under the Apache License, Version 2.0. The full text accompanies this software as LICENSE.txt and may be displayed at any time by running `SocialMCP license`.
 
-1.  Licence. SocialMCP is free and open-source software licensed under the
-    Apache License, Version 2.0. The full text accompanies this software as
-    LICENSE.txt and may be displayed at any time by running
-    `SocialMCP license`.
+2. No warranty. THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTY OR CONDITION OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY WARRANTY OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT.
 
-2.  No warranty. THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTY OR
-    CONDITION OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION
-    ANY WARRANTY OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR
-    NON-INFRINGEMENT.
+3. Limitation of liability. To the maximum extent permitted by applicable law, no author or contributor shall be liable for any claim, damages, or other liability arising from, out of, or in connection with the software or its use.
 
-3.  Limitation of liability. To the maximum extent permitted by applicable
-    law, no author or contributor shall be liable for any claim, damages, or
-    other liability arising from, out of, or in connection with the software
-    or its use.
+4. Scope of processing. The software processes only the data export you select, and stores the resulting database locally on this computer. It operates without any account, sign-in, or server; transmits no analytics or telemetry; and does not access any social network, credential, or browser cookie. Deleting the database removes all data it holds.
 
-4.  Scope of processing. The software processes only the data export you
-    select. The resulting database is stored locally on this computer. The
-    software operates without any account, sign-in, or server; it transmits
-    no analytics or telemetry; and it does not access any social network,
-    credential, or browser cookie. Deleting the database removes all data it
-    holds.
+5. Third-party AI services. Results the software returns to your AI assistant form part of your conversation with that assistant, and are accordingly disclosed to its operator (for example Anthropic, OpenAI, or Google) under that operator's own terms and privacy policy. Such disclosure is outside the control of this software and its authors.
 
-5.  Third-party AI services. Results the software returns to your AI
-    assistant form part of your conversation with that assistant and are
-    accordingly disclosed to its operator (for example Anthropic, OpenAI, or
-    Google) under that operator's own terms and privacy policy. Such
-    disclosure is outside the control of this software and its authors.
+6. Outbound requests. The only network request the software initiates is to an embedding service you configure. This defaults to a model running on this computer, and may be disabled entirely.
 
-6.  Outbound requests. The only network request the software initiates is to
-    an embedding service you configure. This defaults to a model running on
-    this computer and may be disabled entirely.
+7. Configuration of other applications. Where you so direct, the software adds an entry named "socialmcp" to the settings of the AI applications you select, having first created a backup of each file it modifies. No such file is modified before you make that selection.
 
-7.  Configuration of other applications. Where you so direct, the software
-    adds an entry named "socialmcp" to the settings of the AI applications
-    you select, having first created a backup of each file it modifies. No
-    such file is modified before you make that selection.
-
-8.  Acceptance. Selecting "Agree and continue" records your acceptance of
-    these terms on this computer. The record is not transmitted."""
+8. Acceptance. Selecting "Agree and continue" records your acceptance of these terms on this computer. The record is not transmitted."""
 
 
 def terms_fingerprint() -> str:
@@ -462,7 +447,11 @@ def terms_flow() -> bool:
         return True
 
     trace("terms: asking")
-    answer = ask(TERMS, title="SocialMCP — terms", buttons=("Quit", "Agree and continue"))
+    answer = ask(
+        TERMS,
+        title="SocialMCP — Terms of Use",
+        buttons=("Quit", "Agree and continue"),
+    )
     if answer != "Agree and continue":
         trace("terms: declined, nothing written")
         return False
@@ -540,13 +529,13 @@ def build_setup_report(
         "",
         f'Next: click "{ACTION_LOAD}" and pick the .zip LinkedIn sent you.',
         "",
-        "Keep it as the .zip — double-clicking a .zip unzips it, and the .zip",
-        "is what SocialMCP reads. The chooser opens in Downloads, where",
-        "browsers put it, but you can pick it from anywhere.",
+        "Keep it as the .zip — double-clicking a .zip unzips it, and the .zip is"
+        " what SocialMCP reads. The chooser opens in Downloads, where browsers put"
+        " it, but you can pick it from anywhere.",
         "",
-        "Don't have it yet? LinkedIn -> Settings & Privacy -> Data Privacy ->",
-        "Get a copy of your data. Choose the larger archive; it arrives by",
-        "email, usually within a day.",
+        "Don't have it yet? LinkedIn -> Settings & Privacy -> Data Privacy -> Get a"
+        " copy of your data. Choose the larger archive; it arrives by email, usually"
+        " within a day.",
         "",
         "Then quit and reopen your AI app and ask it:",
         '  "what can you do with my network?"',
@@ -555,9 +544,9 @@ def build_setup_report(
         # "I agree" gate before they have seen what the app does. Apache-2.0
         # already disclaims warranty; this is the plain-language version, and
         # `SocialMCP license` prints the full text.
-        "Free and open source under Apache-2.0, provided as-is with no",
-        "warranty. SocialMCP uploads nothing and collects no analytics — though",
-        "answers your assistant gives you travel to whoever runs it.",
+        "Free and open source under Apache-2.0, provided as-is with no warranty."
+        " SocialMCP uploads nothing and collects no analytics — though answers your"
+        " assistant gives you travel to whoever runs it.",
     ]
     if restart:
         lines += ["", f"Restart needed for: {', '.join(r.client for r in restart)}"]

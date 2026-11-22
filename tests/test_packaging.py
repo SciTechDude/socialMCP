@@ -1514,3 +1514,50 @@ def test_the_terms_say_the_things_that_matter():
     assert "before you make that selection" in terms
     # Acceptance is local. The terms say so, because the file exists.
     assert "not transmitted" in terms
+
+
+def test_dialog_prose_is_not_hard_wrapped():
+    """Let the system wrap. Our own line breaks fight it.
+
+    NSAlert wraps text to the dialog width, so a string already broken at 72
+    characters gets broken twice: every one of our breaks becomes a premature
+    line ending, leaving ragged gaps mid-sentence. Lines that are deliberately
+    short — a path, a quoted question, a bullet — are fine; prose is not.
+    """
+    app = _load_app_main()
+
+    # Each clause of the terms is one paragraph, however long.
+    for line in app.TERMS.splitlines():
+        if not line.strip():
+            continue
+        assert len(line) > 90 or line.rstrip().endswith((":", ".")), (
+            f"terms line looks hand-wrapped: {line!r}"
+        )
+
+    # The summary's prose paragraphs likewise.
+    message, _buttons = app.build_setup_report([], embeddings=True)
+    suspects = [
+        line
+        for line in message.splitlines()
+        # A wrapped prose line is long-ish, has no structure, and does not end
+        # a sentence — the signature of a break mid-thought.
+        if 55 < len(line) < 75
+        and not line.rstrip().endswith((".", ":", "?", '"'))
+        and not line.startswith((" ", "/", "-", "1.", "2.", "3."))
+    ]
+    assert not suspects, f"these look hand-wrapped: {suspects}"
+
+
+def test_the_terms_heading_is_not_repeated_in_the_body():
+    """The dialog title is the heading; the body must not say it again."""
+    source = (
+        Path(__file__).resolve().parent.parent / "packaging" / "macos" / "app_main.py"
+    ).read_text(encoding="utf-8")
+    app = _load_app_main()
+
+    assert not app.TERMS.lstrip().lower().startswith("socialmcp"), (
+        "the terms body repeats the window title"
+    )
+    assert 'title="SocialMCP — Terms of Use"' in source, (
+        "the title should carry the heading instead"
+    )
