@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import plistlib
+import re
 import sys
 from pathlib import Path
 
@@ -1723,3 +1724,47 @@ def test_every_acceptance_is_kept_not_overwritten(monkeypatch, tmp_path):
     # Still local, still free of identifiers.
     for entry in record["accepted"]:
         assert set(entry) == {"fingerprint", "accepted_at"}, entry
+
+
+def test_the_documented_button_is_the_button_the_app_shows():
+    """A user who follows the docs must find the button they were told to click.
+
+    Three files tell someone how to remove SocialMCP — the README, the
+    quick-start, and the note left inside the data folder — and all three name
+    a button. A rename that updates the code and not the instructions sends a
+    nervous user hunting for a word that is no longer on screen, which is the
+    worst moment to look untrustworthy. So the label lives in one constant and
+    the instructions are checked against it.
+    """
+    app = _load_app_main()
+    label = app.ACTION_REMOVE
+    # The ellipsis is a UI convention, not something a user types or reads in
+    # prose, so documents are allowed to name the button without it.
+    plain = label.rstrip("…").strip()
+
+    assert "remove" in plain.lower(), (
+        "the removal button should say what it removes, not 'Disconnect'"
+    )
+
+    # "Disconnect" is still the right word for what the first step *does*, so
+    # only the instruction to press it is wrong. Look for the verb.
+    stale = re.compile(r"(?:click|press|choose|select)\s+\*{0,2}Disconnect", re.I)
+    for name in ("README.md", "QUICKSTART.md"):
+        text = (REPO / name).read_text(encoding="utf-8")
+        found = stale.search(text)
+        assert not found, f"{name} still says to press Disconnect: {found.group(0)!r}"
+        assert plain in text, f"{name} should name the button as {plain!r}"
+
+    config = (REPO / "socialmcp" / "config.py").read_text(encoding="utf-8")
+    explainer = config.split("def _write_folder_explainer", 1)[1].split("\n    def ", 1)[0]
+    assert plain in explainer.replace('"\n                "', ""), (
+        "the leftover folder's note should name the button as the app shows it"
+    )
+
+    # And the branch behind it is driven by the same constant, so the button
+    # cannot be renamed into a dialog that no longer does anything.
+    source = (REPO / "packaging" / "macos" / "app_main.py").read_text(encoding="utf-8")
+    assert source.count("ACTION_REMOVE") >= 3, (
+        "the label, the button and the branch should all be the one constant"
+    )
+    assert '== "Disconnect"' not in source, "a stale literal branch would never match"

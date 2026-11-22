@@ -29,6 +29,11 @@ from typing import Any
 MAX_DIALOG_BUTTONS = 3  # AppleScript's `display dialog` hard limit
 
 ACTION_LOAD = "Choose my export…"
+# "Remove SocialMCP…", not "Disconnect": disconnecting is what it does by
+# default, but somebody who wants the app gone looks for the word remove.
+# The ellipsis signals that a choice follows rather than an immediate
+# deletion, and the flow behind it still keeps data unless asked.
+ACTION_REMOVE = "Remove SocialMCP…"
 ACTION_DONE = "Done"
 
 APP_SUPPORT = Path.home() / "Library" / "Application Support" / "SocialMCP"
@@ -821,7 +826,7 @@ def build_setup_report(
     # with the only thing they actually need to do next. It returns when they
     # open the app again, which is where someone looks to undo an install.
     if connected and not blocked and not first_run:
-        buttons.append("Disconnect")
+        buttons.append(ACTION_REMOVE)
 
     # One action. Every extra button here was a decision the user had to make
     # about something they had not done yet, and each alternative route cost
@@ -986,7 +991,7 @@ def setup_flow() -> int:
         )
         choice = ask(message, buttons=tuple(b for b in buttons if b != "Replace it"))
 
-    if choice == "Disconnect":
+    if choice == ACTION_REMOVE:
         return disconnect_flow(config)
 
     if choice == "Get Ollama":
@@ -1168,8 +1173,12 @@ def disconnect_flow(config) -> int:
     # Only paths inside the app's own folder are offered for deletion; see
     # Config.deletable_data_paths for why that matters.
     data_paths, refused = config.deletable_data_paths()
-    summary = [f"Disconnected from: {', '.join(r.client for r in removed) or 'nothing'}", ""]
-    summary += ["Restart those apps to finish.", ""]
+    summary = [
+        f"Removed SocialMCP from: {', '.join(r.client for r in removed) or 'nothing'}",
+        "",
+        "Those apps no longer know about it. Restart them to finish.",
+        "",
+    ]
     if data_paths:
         summary += [
             "Your data is still on this Mac: " + _describe_data(config),
