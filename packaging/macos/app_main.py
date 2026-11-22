@@ -363,28 +363,47 @@ def _alert_via_bridge(
     return answer if answer in buttons else None
 
 
-TERMS = """SocialMCP reads a social network data export you already own and \
-keeps the result on this computer.
+TERMS = """SocialMCP — Terms of Use
 
-  •  Free and open source under the Apache License 2.0.
-  •  Provided AS IS, with no warranty or condition of any kind, and no
-     liability for what it does or fails to do.
-  •  No account, no sign-in, no server. SocialMCP uploads nothing.
-  •  Your AI assistant is separate. Answers it gives you travel to whoever
-     runs it (Anthropic, OpenAI, Google), like the rest of your chat. That
-     is outside SocialMCP's control.
-  •  No analytics and no telemetry are collected. Nobody is told you ran it.
-  •  It never logs in to any social network, and never uses your password or
-     cookies. It reads only the export file you choose.
-  •  Everything lives in one file on this Mac. Deleting it deletes all of it.
-  •  The one outbound request it can make is to a local embedding model you
-     choose to run, and it works without one.
+1.  Licence. SocialMCP is free and open-source software licensed under the
+    Apache License, Version 2.0. The full text accompanies this software as
+    LICENSE.txt and may be displayed at any time by running
+    `SocialMCP license`.
 
-Connecting an AI app adds a socialmcp entry to that app's settings, after \
-backing the file up. You pick which apps, and nothing is written until you do.
+2.  No warranty. THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTY OR
+    CONDITION OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION
+    ANY WARRANTY OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR
+    NON-INFRINGEMENT.
 
-The full licence is on the disk image as LICENSE.txt, and `SocialMCP license` \
-prints it at any time."""
+3.  Limitation of liability. To the maximum extent permitted by applicable
+    law, no author or contributor shall be liable for any claim, damages, or
+    other liability arising from, out of, or in connection with the software
+    or its use.
+
+4.  Scope of processing. The software processes only the data export you
+    select. The resulting database is stored locally on this computer. The
+    software operates without any account, sign-in, or server; it transmits
+    no analytics or telemetry; and it does not access any social network,
+    credential, or browser cookie. Deleting the database removes all data it
+    holds.
+
+5.  Third-party AI services. Results the software returns to your AI
+    assistant form part of your conversation with that assistant and are
+    accordingly disclosed to its operator (for example Anthropic, OpenAI, or
+    Google) under that operator's own terms and privacy policy. Such
+    disclosure is outside the control of this software and its authors.
+
+6.  Outbound requests. The only network request the software initiates is to
+    an embedding service you configure. This defaults to a model running on
+    this computer and may be disabled entirely.
+
+7.  Configuration of other applications. Where you so direct, the software
+    adds an entry named "socialmcp" to the settings of the AI applications
+    you select, having first created a backup of each file it modifies. No
+    such file is modified before you make that selection.
+
+8.  Acceptance. Selecting "Agree and continue" records your acceptance of
+    these terms on this computer. The record is not transmitted."""
 
 
 def terms_fingerprint() -> str:

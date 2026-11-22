@@ -1491,19 +1491,26 @@ def test_the_terms_say_the_things_that_matter():
     terms = app.TERMS
 
     for phrase in (
-        "Apache License 2.0",
-        "AS IS",
-        "no warranty",
-        "SocialMCP uploads nothing",
-        "No analytics",
-        "never logs in",
-        "Deleting it deletes all of it",
+        "Apache License, Version 2.0",
+        'PROVIDED "AS IS"',
+        "WITHOUT WARRANTY",
+        "Limitation of liability",
+        "no analytics or telemetry",
+        "does not access any social network",
+        "Deleting the database removes all data",
     ):
         assert phrase in terms, f"the terms should state: {phrase!r}"
     # The single outbound request must be disclosed rather than glossed over.
-    assert "local embedding model" in terms
-    # And the bigger one: results travel to whoever runs the assistant. Saying
-    # only "nothing is uploaded" reads as "my contacts never reach a cloud
+    assert "embedding service you configure" in terms
+    assert "may be disabled entirely" in terms
+    # And the bigger one: results reach whoever operates the assistant. Saying
+    # only that nothing is uploaded reads as "my contacts never reach a cloud
     # model", which is not true of any cloud assistant.
-    assert "travel to whoever" in terms, "the terms must not overclaim"
-    assert "outside SocialMCP's control" in terms
+    assert "disclosed to its operator" in terms, "the terms must not overclaim"
+    assert "outside the control of this software" in terms
+    # Writing into another application's settings is a consequential act and
+    # has to be stated, along with the fact that it waits for a choice.
+    assert "Configuration of other applications" in terms
+    assert "before you make that selection" in terms
+    # Acceptance is local. The terms say so, because the file exists.
+    assert "not transmitted" in terms
