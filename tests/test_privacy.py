@@ -753,3 +753,67 @@ def test_no_document_claims_data_never_leaves_the_computer():
         "say what is true instead — SocialMCP uploads nothing, and answers "
         f"travel to whoever runs the assistant: {offenders}"
     )
+
+
+@requires_git
+def test_removal_refuses_to_delete_folders_it_did_not_create(tmp_path):
+    """Nobody reviews deletion code on our behalf.
+
+    Notarization is automated malware scanning and a directly-distributed Mac
+    app never meets a human reviewer, so this guard is the only thing standing
+    between a configurable drop folder and `--purge-data` deleting someone's
+    Downloads. `drop_dir` and `home` can both be set by TOML or environment
+    variable.
+    """
+    from socialmcp.config import Config
+
+    home = Path.home()
+    for dangerous in (
+        home / "Downloads",
+        home / "Documents",
+        home / "Desktop",
+        home,
+        Path("/"),
+    ):
+        appdata = tmp_path / "appdata"
+        config = Config(home=appdata, drop_dir=dangerous)
+        config.db_path.parent.mkdir(parents=True, exist_ok=True)
+        config.db_path.write_text("x", encoding="utf-8")
+
+        safe, refused = config.deletable_data_paths()
+        assert dangerous not in safe, f"{dangerous} must never be deletable"
+        if dangerous.exists():
+            assert any(path == dangerous for path, _why in refused), (
+                f"{dangerous} should be refused with a reason, not skipped silently"
+            )
+
+    # The app's own folder is still deletable, or removal would do nothing.
+    appdata = tmp_path / "own"
+    config = Config(home=appdata, drop_dir=appdata / "drop-archive")
+    config.ensure_dirs()
+    config.db_path.write_text("x", encoding="utf-8")
+    safe, _refused = config.deletable_data_paths()
+    assert config.db_path in safe
+    assert config.drop_dir in safe
+
+
+@requires_git
+def test_removal_does_not_follow_a_symlink_out_of_its_own_folder(tmp_path):
+    """A symlinked drop folder must not become a route to deleting elsewhere."""
+    from socialmcp.config import Config
+
+    outside = tmp_path / "somewhere-else"
+    outside.mkdir()
+    (outside / "a-users-file.txt").write_text("precious", encoding="utf-8")
+
+    appdata = tmp_path / "appdata"
+    appdata.mkdir()
+    link = appdata / "drop-archive"
+    link.symlink_to(outside, target_is_directory=True)
+
+    config = Config(home=appdata, drop_dir=link)
+    safe, refused = config.deletable_data_paths()
+
+    assert link not in safe, "a symlink must not be deleted"
+    assert any("symlink" in reason for _path, reason in refused), refused
+    assert (outside / "a-users-file.txt").exists()

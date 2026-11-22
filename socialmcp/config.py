@@ -103,6 +103,65 @@ class Config:
             else self.drop_dir.parent / "ingested"
         )
 
+
+    def deletable_data_paths(self) -> tuple[list[Path], list[tuple[Path, str]]]:
+        """Split this config's data paths into (safe to delete, refused).
+
+        Nobody reviews deletion code on our behalf: notarization is automated
+        malware scanning, and a directly-distributed Mac app never meets a
+        human reviewer. So the rules are enforced here rather than trusted to
+        the caller.
+
+        `drop_dir` and `home` are user-configurable, by TOML or environment
+        variable. Somebody who points the drop folder at ~/Downloads — a
+        reasonable-looking thing to try — must not lose their Downloads folder
+        to `--purge-data`. A path is therefore deleted only when it sits
+        inside the configured home, and never when it is the home directory, a
+        standard user folder, a filesystem root, or a symlink leading out of
+        the tree.
+
+        Refused paths are returned with a reason so the caller can say what it
+        declined to touch, rather than silently doing less than it claimed.
+        """
+        protected = {
+            Path("/"),
+            Path.home(),
+            Path.home() / "Downloads",
+            Path.home() / "Documents",
+            Path.home() / "Desktop",
+            Path.home() / "Library",
+            Path.home() / "Library" / "Application Support",
+        }
+
+        safe: list[Path] = []
+        refused: list[tuple[Path, str]] = []
+        try:
+            home = self.home.resolve()
+        except OSError:
+            return [], [(self.home, "its location could not be resolved")]
+
+        for path in (self.db_path, self.drop_dir, self.archive_dir):
+            if not path.exists():
+                continue
+            if path.is_symlink():
+                refused.append((path, "it is a symlink, and the target is not ours"))
+                continue
+            try:
+                resolved = path.resolve()
+            except OSError:
+                refused.append((path, "its location could not be resolved"))
+                continue
+            if resolved in protected or (resolved == home and path != self.home):
+                refused.append((path, "it is a standard folder, not one we created"))
+                continue
+            if resolved != home and home not in resolved.parents:
+                refused.append(
+                    (path, f"it is outside SocialMCP's own folder ({home})")
+                )
+                continue
+            safe.append(path)
+        return safe, refused
+
     def ensure_dirs(self) -> None:
         """Create the home, database, drop zone and per-source subfolders."""
         for path in (self.home, self.drop_dir, self.archive_dir, self.db_path.parent):
