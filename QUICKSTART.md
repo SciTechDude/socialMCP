@@ -210,11 +210,17 @@ Apple Silicon build on an Intel Mac, or the reverse. Nothing is broken and
 nothing is actually damaged; macOS just reports it that way. Delete the file
 and use the command-line install above, which works on either chip.
 
-The app itself is **signed and notarized with Apple**, so it opens normally on
-any Mac — no security warning to dismiss, no Privacy & Security detour, and
-nothing to bypass. If you are ever told to strip a quarantine flag or click
-through a Gatekeeper warning to run SocialMCP, something is wrong: either the
-download is incomplete or it did not come from
+### "SocialMCP is an app downloaded from the Internet. Are you sure?"
+
+**That one is normal — click Open.** macOS asks it once for anything you
+download from the web, however it was signed. The message should also say
+*"Apple checked it for malicious software and none was detected"*, which is the
+notarization doing its job. You will not be asked again.
+
+What should *never* happen: macOS saying the developer **"cannot be verified"**,
+offering only **Move to Trash**, or any instruction to visit Privacy & Security
+or strip a quarantine flag. Those mean the app is not properly signed — so
+either the download is incomplete or it did not come from
 [the releases page](https://github.com/SciTechDude/socialMCP/releases).
 
 You can verify what you downloaded before opening it. This prints the signing

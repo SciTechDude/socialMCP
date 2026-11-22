@@ -56,11 +56,21 @@ and it reads that one file.
 > If you pick wrong, macOS reports that the app is damaged or cannot be opened.
 > Nothing is broken: delete it and download the other file.
 
-The download is **signed with an Apple Developer ID and notarized by Apple**,
-so it opens by double-clicking with no security warning to click through. You
-never need to bypass Gatekeeper or strip a quarantine flag to run it — if any
-instructions tell you to, treat that as a sign the file did not come from
-[the releases page](https://github.com/SciTechDude/socialMCP/releases). To
+The download is **signed with an Apple Developer ID and notarized by Apple**.
+
+**The first time you open it, macOS will ask "are you sure?"** — that is normal
+for anything downloaded from the web, and it is what success looks like. The
+message should read:
+
+> "SocialMCP" is an app downloaded from the Internet. Are you sure you want to
+> open it? **Apple checked it for malicious software and none was detected.**
+
+Click **Open**. It happens once, and that second sentence is the notarization.
+
+What you should *never* have to do is bypass anything. If macOS says the
+developer "cannot be verified", offers only **Move to Trash**, or you are told
+to visit Privacy & Security or strip a quarantine flag, the file did not come
+from [the releases page](https://github.com/SciTechDude/socialMCP/releases). To
 check a download yourself before opening it:
 
 ```bash
