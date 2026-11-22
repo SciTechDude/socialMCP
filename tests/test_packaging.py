@@ -1378,7 +1378,11 @@ def test_the_app_ships_its_own_licence_and_notice():
     assert "provided as-is with no" in report, (
         "say it once in the first dialog rather than behind an agreement gate"
     )
-    assert "no analytics are collected" in report
+    assert "collects no analytics" in report
+    assert "travel to whoever runs it" in report, (
+        "the dialog must not imply contacts never reach a cloud model: the "
+        "assistant sends whatever it read to answer you"
+    )
 
 
 def test_the_licence_command_prints_the_terms():
@@ -1490,7 +1494,7 @@ def test_the_terms_say_the_things_that_matter():
         "Apache License 2.0",
         "AS IS",
         "no warranty",
-        "Nothing is uploaded",
+        "SocialMCP uploads nothing",
         "No analytics",
         "never logs in",
         "Deleting it deletes all of it",
@@ -1498,3 +1502,8 @@ def test_the_terms_say_the_things_that_matter():
         assert phrase in terms, f"the terms should state: {phrase!r}"
     # The single outbound request must be disclosed rather than glossed over.
     assert "local embedding model" in terms
+    # And the bigger one: results travel to whoever runs the assistant. Saying
+    # only "nothing is uploaded" reads as "my contacts never reach a cloud
+    # model", which is not true of any cloud assistant.
+    assert "travel to whoever" in terms, "the terms must not overclaim"
+    assert "outside SocialMCP's control" in terms

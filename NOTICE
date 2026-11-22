@@ -25,6 +25,13 @@ The only outbound network request it can make is to an embedding provider you
 configure yourself, which defaults to a model running on your own machine
 (127.0.0.1:11434) and can be switched off entirely.
 
+What it cannot control is what your AI assistant does with an answer. SocialMCP
+uploads nothing, but the contacts it hands back become part of your
+conversation, so whoever runs that assistant — Anthropic, OpenAI, Google —
+sees whatever it read to answer you, exactly as they see the rest of the chat.
+That is true of any cloud assistant and is outside this software's control. A
+model running on your own machine is the only way to avoid it.
+
 Deleting the database file deletes everything it holds.
 
 ----------------------------------------------------------------------------

@@ -43,7 +43,14 @@ No Python and no terminal. When you pick your export, macOS may ask whether
 SocialMCP can open your Downloads, Desktop or Documents folder — that is macOS
 asking on behalf of the file-chooser, and **you can say no to all of them** and
 drag the `.zip` into the app's own folder instead. Either way it reads only
-that one file, and nothing is uploaded anywhere.
+that one file.
+
+**One honest caveat about where your data goes.** SocialMCP uploads nothing.
+But when you ask your assistant a question, the contacts it reads to answer you
+become part of that conversation — so whoever runs the assistant (Anthropic,
+OpenAI, Google) sees them, exactly as they see everything else you type. That
+is true of any cloud assistant and is outside SocialMCP's control. A model
+running on your own machine is the only way to avoid it.
 
 > **Pick the file that matches your Mac.** There are two, and the wrong one
 > will not open at all:
@@ -197,7 +204,8 @@ Each of these has caveats worth knowing — see [CAPABILITIES.md](CAPABILITIES.m
 - Cannot send messages, accept invitations or change anything on the social network. It is read-only by design.
 - Invitation history covers roughly the last six months, so older connections cannot be attributed to whoever sent the invitation.
 - Knows nothing about events by name on its own. Your assistant supplies the dates; SocialMCP matches them against when you met people.
-- Everything is stored in one file on this computer. Nothing is uploaded, and deleting that file deletes all of it.
+- Cannot control what your AI assistant does with an answer. SocialMCP uploads nothing, but the results it hands back become part of your conversation — so whoever runs that assistant (Anthropic, OpenAI, Google) sees whatever it read to answer you, exactly as they see the rest of the chat. A model running on your own machine is the only way to avoid that.
+- Everything is stored in one file on this computer. SocialMCP uploads nothing and deleting that file deletes all of it.
 
 <!-- capabilities:end -->
 

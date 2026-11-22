@@ -721,3 +721,35 @@ def test_importing_an_export_writes_only_inside_the_apps_own_folder(tmp_path):
         assert not any(f"/{sensitive}/" in w for w in writes), (
             f"something was written into the user's {sensitive} folder"
         )
+
+
+@requires_git
+def test_no_document_claims_data_never_leaves_the_computer():
+    """"Nothing leaves your computer" is not true of a cloud assistant.
+
+    SocialMCP uploads nothing, and that is worth saying. But the contacts it
+    returns become part of the user's conversation, so whoever runs the
+    assistant sees them. A flat "never leaves your computer" invites a
+    privacy-minded reader to feel misled the moment they think it through —
+    and that reader is exactly this project's audience.
+    """
+    overclaims = (
+        "never leaves your computer",
+        "never leaves your machine",
+        "nothing leaves your computer",
+        "nothing leaves your machine",
+    )
+    offenders: list[str] = []
+    for path in tracked_text_files():
+        # Tests quote the phrases they forbid, including this one.
+        if path.parent.name == "tests":
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        for phrase in overclaims:
+            if phrase in text:
+                line = text[: text.find(phrase)].count("\n") + 1
+                offenders.append(f"{path.relative_to(REPO)}:{line} ({phrase!r})")
+    assert not offenders, (
+        "say what is true instead — SocialMCP uploads nothing, and answers "
+        f"travel to whoever runs the assistant: {offenders}"
+    )

@@ -11,7 +11,10 @@ When you're done, you'll be able to ask your AI assistant things like:
 >
 > *Remind me how I met Dana.*
 
-Everything stays on your own computer. Nothing is uploaded anywhere.
+Your export and the database stay on your own computer — SocialMCP uploads
+nothing. Bear in mind that answers your assistant gives you travel to whoever
+runs it, like the rest of your conversation; that part is outside SocialMCP's
+control.
 
 ---
 

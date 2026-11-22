@@ -203,7 +203,8 @@ function run(argv) {
     // than after it. No agreement gate — Apache-2.0 disclaims warranty
     // already, and `SocialMCP license` prints the full text.
     + 'SocialMCP is free and open source under Apache-2.0, provided as-is '
-    + 'with no warranty. Nothing is uploaded and no analytics are collected.'
+    + 'with no warranty. SocialMCP uploads nothing and collects no analytics, '
+    + 'though answers your assistant gives you travel to whoever runs it.'
   );
   alert.addButtonWithTitle('Connect');
   alert.addButtonWithTitle('Cancel');
@@ -368,7 +369,10 @@ keeps the result on this computer.
   •  Free and open source under the Apache License 2.0.
   •  Provided AS IS, with no warranty or condition of any kind, and no
      liability for what it does or fails to do.
-  •  No account, no sign-in, no server. Nothing is uploaded.
+  •  No account, no sign-in, no server. SocialMCP uploads nothing.
+  •  Your AI assistant is separate. Answers it gives you travel to whoever
+     runs it (Anthropic, OpenAI, Google), like the rest of your chat. That
+     is outside SocialMCP's control.
   •  No analytics and no telemetry are collected. Nobody is told you ran it.
   •  It never logs in to any social network, and never uses your password or
      cookies. It reads only the export file you choose.
@@ -533,7 +537,8 @@ def build_setup_report(
         # already disclaims warranty; this is the plain-language version, and
         # `SocialMCP license` prints the full text.
         "Free and open source under Apache-2.0, provided as-is with no",
-        "warranty. Nothing is uploaded and no analytics are collected.",
+        "warranty. SocialMCP uploads nothing and collects no analytics — though",
+        "answers your assistant gives you travel to whoever runs it.",
     ]
     if restart:
         lines += ["", f"Restart needed for: {', '.join(r.client for r in restart)}"]
