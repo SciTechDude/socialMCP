@@ -11,6 +11,7 @@ every setting must be reachable through an env var as well as the TOML file.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import tomllib
 from dataclasses import dataclass, field, replace
@@ -104,6 +105,47 @@ class Config:
         )
 
 
+    def _write_folder_explainer(self) -> None:
+        """Leave a note in the data folder saying what it is.
+
+        Dragging the app to the Trash deliberately leaves the database behind:
+        deleting someone's notes as a side effect of removing an application
+        is not a choice this software should make for them. The cost of that
+        caution is an orphaned folder inside Application Support, which a user
+        has no reason to recognise months later — so it explains itself, says
+        what is lost if it goes, and how to remove it properly.
+        """
+        note = self.home / "ABOUT THIS FOLDER.txt"
+        if note.exists():
+            return
+        with contextlib.suppress(OSError):
+            # A folder that cannot be annotated is still a working folder.
+            note.write_text(
+                "This folder belongs to SocialMCP.\n"
+                "https://github.com/SciTechDude/socialMCP\n"
+                "\n"
+                "What is in here\n"
+                "  socialmcp.db    your contacts, your private notes, the names you\n"
+                "                  gave events, and which exports have been read\n"
+                "  drop-archive/   where a data export is placed to be read\n"
+                "  ingested/       exports already read, kept so they are not\n"
+                "                  read twice\n"
+                "\n"
+                "Nothing here is uploaded anywhere.\n"
+                "\n"
+                "If SocialMCP is gone and you want this folder gone too, deleting it\n"
+                "is safe and removes everything above. Be aware that a fresh export\n"
+                "from the social network can rebuild your contacts, but NOT the notes\n"
+                "you wrote or the event names you chose. Those exist only here.\n"
+                "\n"
+                "The app leaves this folder alone when you drag it to the Trash, on\n"
+                "purpose: deleting your notes as a side effect of removing an\n"
+                "application is not a decision it should make for you. To remove\n"
+                "both at once, open SocialMCP and choose Disconnect, then Delete my\n"
+                "data — or run `socialmcp uninstall --purge-data`.\n",
+                encoding="utf-8",
+            )
+
     def deletable_data_paths(self) -> tuple[list[Path], list[tuple[Path, str]]]:
         """Split this config's data paths into (safe to delete, refused).
 
@@ -166,6 +208,7 @@ class Config:
         """Create the home, database, drop zone and per-source subfolders."""
         for path in (self.home, self.drop_dir, self.archive_dir, self.db_path.parent):
             path.mkdir(parents=True, exist_ok=True)
+        self._write_folder_explainer()
         if not self.create_source_dirs:
             return
         for folder, (source, _description) in DROP_SUBDIRS.items():

@@ -817,3 +817,60 @@ def test_removal_does_not_follow_a_symlink_out_of_its_own_folder(tmp_path):
     assert link not in safe, "a symlink must not be deleted"
     assert any("symlink" in reason for _path, reason in refused), refused
     assert (outside / "a-users-file.txt").exists()
+
+
+@requires_git
+def test_the_documented_removal_table_matches_what_the_code_does():
+    """A skeptical reader should be able to check the claims, and be right.
+
+    The README states what each removal method touches. That is only worth
+    publishing if it stays true, so the claims are checked against the code
+    rather than maintained by hand.
+    """
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    section = readme.split("### Exactly what each method touches", 1)[1].split("##", 1)[0]
+
+    # The three things deletion covers, named in the documentation.
+    for item in ("socialmcp.db", "drop-archive/", "ingested/"):
+        assert item in section, f"the table should name {item}"
+
+    # And the protections it promises.
+    for promise in ("symlinks are refused", "Downloads", "never claims"):
+        assert promise.lower() in section.lower(), f"missing claim: {promise!r}"
+
+    # Those protections must exist in the code the section points at.
+    config = (REPO / "socialmcp" / "config.py").read_text(encoding="utf-8")
+    guard = config.split("def deletable_data_paths", 1)[1].split("\n    def ", 1)[0]
+    assert "is_symlink" in guard, "the README claims symlinks are refused"
+    assert "Downloads" in guard, "the README claims Downloads is rejected"
+    assert "refused.append" in guard, "the README claims skipped paths are named"
+
+    # Dragging to the Trash keeps data, and the folder explains itself.
+    assert "leaves your data" in readme or "kept" in section
+    assert "_write_folder_explainer" in config, (
+        "the README promises a file explaining the leftover folder"
+    )
+
+
+@requires_git
+def test_the_leftover_folder_explains_itself(tmp_path):
+    """Caution leaves an orphaned folder; it must not be a mystery.
+
+    Someone finding `~/Library/Application Support/SocialMCP` months later has
+    no reason to recognise it, so the folder says what it is, what is lost if
+    it goes, and how to remove everything at once.
+    """
+    from socialmcp.config import Config
+
+    config = Config(home=tmp_path / "data", drop_dir=tmp_path / "data" / "drop-archive")
+    config.ensure_dirs()
+
+    note = tmp_path / "data" / "ABOUT THIS FOLDER.txt"
+    assert note.exists(), "the data folder should explain itself"
+    text = note.read_text(encoding="utf-8")
+
+    assert "SocialMCP" in text
+    assert "deleting it" in text.lower(), "say that deleting it is safe and total"
+    assert "NOT the notes" in text, "say what a fresh export cannot restore"
+    assert "uninstall --purge-data" in text, "say how to remove everything at once"
+    assert "not uploaded" in text or "Nothing here is uploaded" in text

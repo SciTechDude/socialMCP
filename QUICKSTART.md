@@ -317,7 +317,13 @@ removes the database, the drop folder and processed archives. Your own notes and
 the event names you chose are *not* in any LinkedIn export, so they cannot be
 recovered afterwards.
 
-**Remove the app** — drag SocialMCP from Applications to the Trash.
+**Remove the app** — drag SocialMCP from Applications to the Trash. This leaves
+your data where it is, on purpose: removing an app should not delete the notes
+you wrote. The folder it leaves behind contains a file explaining what is in it
+and how to delete it.
+
+Not sure what each option removes? The README has
+[a table of exactly what each method touches](README.md#exactly-what-each-method-touches).
 
 Nothing else is left behind. SocialMCP only ever writes to two places: its own
 folder in `~/Library/Application Support/SocialMCP`, and your AI apps' settings
