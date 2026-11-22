@@ -753,3 +753,124 @@ def test_no_document_claims_data_never_leaves_the_computer():
         "say what is true instead — SocialMCP uploads nothing, and answers "
         f"travel to whoever runs the assistant: {offenders}"
     )
+
+
+@requires_git
+def test_removal_refuses_to_delete_folders_it_did_not_create(tmp_path):
+    """Nobody reviews deletion code on our behalf.
+
+    Notarization is automated malware scanning and a directly-distributed Mac
+    app never meets a human reviewer, so this guard is the only thing standing
+    between a configurable drop folder and `--purge-data` deleting someone's
+    Downloads. `drop_dir` and `home` can both be set by TOML or environment
+    variable.
+    """
+    from socialmcp.config import Config
+
+    home = Path.home()
+    for dangerous in (
+        home / "Downloads",
+        home / "Documents",
+        home / "Desktop",
+        home,
+        Path("/"),
+    ):
+        appdata = tmp_path / "appdata"
+        config = Config(home=appdata, drop_dir=dangerous)
+        config.db_path.parent.mkdir(parents=True, exist_ok=True)
+        config.db_path.write_text("x", encoding="utf-8")
+
+        safe, refused = config.deletable_data_paths()
+        assert dangerous not in safe, f"{dangerous} must never be deletable"
+        if dangerous.exists():
+            assert any(path == dangerous for path, _why in refused), (
+                f"{dangerous} should be refused with a reason, not skipped silently"
+            )
+
+    # The app's own folder is still deletable, or removal would do nothing.
+    appdata = tmp_path / "own"
+    config = Config(home=appdata, drop_dir=appdata / "drop-archive")
+    config.ensure_dirs()
+    config.db_path.write_text("x", encoding="utf-8")
+    safe, _refused = config.deletable_data_paths()
+    assert config.db_path in safe
+    assert config.drop_dir in safe
+
+
+@requires_git
+def test_removal_does_not_follow_a_symlink_out_of_its_own_folder(tmp_path):
+    """A symlinked drop folder must not become a route to deleting elsewhere."""
+    from socialmcp.config import Config
+
+    outside = tmp_path / "somewhere-else"
+    outside.mkdir()
+    (outside / "a-users-file.txt").write_text("precious", encoding="utf-8")
+
+    appdata = tmp_path / "appdata"
+    appdata.mkdir()
+    link = appdata / "drop-archive"
+    link.symlink_to(outside, target_is_directory=True)
+
+    config = Config(home=appdata, drop_dir=link)
+    safe, refused = config.deletable_data_paths()
+
+    assert link not in safe, "a symlink must not be deleted"
+    assert any("symlink" in reason for _path, reason in refused), refused
+    assert (outside / "a-users-file.txt").exists()
+
+
+@requires_git
+def test_the_documented_removal_table_matches_what_the_code_does():
+    """A skeptical reader should be able to check the claims, and be right.
+
+    The README states what each removal method touches. That is only worth
+    publishing if it stays true, so the claims are checked against the code
+    rather than maintained by hand.
+    """
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    section = readme.split("### Exactly what each method touches", 1)[1].split("##", 1)[0]
+
+    # The three things deletion covers, named in the documentation.
+    for item in ("socialmcp.db", "drop-archive/", "ingested/"):
+        assert item in section, f"the table should name {item}"
+
+    # And the protections it promises.
+    for promise in ("symlinks are refused", "Downloads", "never claims"):
+        assert promise.lower() in section.lower(), f"missing claim: {promise!r}"
+
+    # Those protections must exist in the code the section points at.
+    config = (REPO / "socialmcp" / "config.py").read_text(encoding="utf-8")
+    guard = config.split("def deletable_data_paths", 1)[1].split("\n    def ", 1)[0]
+    assert "is_symlink" in guard, "the README claims symlinks are refused"
+    assert "Downloads" in guard, "the README claims Downloads is rejected"
+    assert "refused.append" in guard, "the README claims skipped paths are named"
+
+    # Dragging to the Trash keeps data, and the folder explains itself.
+    assert "leaves your data" in readme or "kept" in section
+    assert "_write_folder_explainer" in config, (
+        "the README promises a file explaining the leftover folder"
+    )
+
+
+@requires_git
+def test_the_leftover_folder_explains_itself(tmp_path):
+    """Caution leaves an orphaned folder; it must not be a mystery.
+
+    Someone finding `~/Library/Application Support/SocialMCP` months later has
+    no reason to recognise it, so the folder says what it is, what is lost if
+    it goes, and how to remove everything at once.
+    """
+    from socialmcp.config import Config
+
+    config = Config(home=tmp_path / "data", drop_dir=tmp_path / "data" / "drop-archive")
+    config.ensure_dirs()
+
+    note = tmp_path / "data" / "ABOUT THIS FOLDER.txt"
+    assert note.exists(), "the data folder should explain itself"
+    text = note.read_text(encoding="utf-8")
+
+    assert "SocialMCP" in text
+    assert "deleting it" in text.lower(), "say that deleting it is safe and total"
+    assert "NOT the notes" in text, "say what a fresh export cannot restore"
+    assert "uninstall --purge-data" in text, "say how to remove everything at once"
+    assert "not uploaded" in text or "Nothing here is uploaded" in text

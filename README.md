@@ -476,12 +476,45 @@ socialmcp uninstall --purge-data # also delete the database and folders
 
 Mac app users can click **Disconnect** on the app's second launch instead.
 
-Uninstall is the mirror of setup and holds to the same rule: it deletes only
-the `socialmcp` entry it created, leaves other MCP servers and unrelated
-settings alone, backs up every file it edits, and refuses to rewrite a config
-file it cannot parse. Your data is never deleted unless you ask for it
-explicitly — notes and event names exist nowhere else and no fresh export
-restores them.
+### Exactly what each method touches
+
+| What you do | AI app settings | Your database and folders | The app itself |
+|---|---|---|---|
+| Drag the app to the Trash | untouched — the entry stays and will point at a missing binary | **kept** | removed |
+| `socialmcp uninstall`, or **Disconnect** in the app | the `socialmcp` entry is removed; the file is backed up first | **kept** | kept |
+| `socialmcp uninstall --purge-data`, or **Disconnect → Delete my data** | same as above | **deleted** — database, drop folder, processed archives | kept |
+| `socialmcp uninstall --dry-run` | nothing — prints what it would do | nothing | nothing |
+
+**What "deleted" means, precisely.** Only these, and only when they sit inside
+SocialMCP's own folder:
+
+- `socialmcp.db` — contacts, your private notes, the event names you chose,
+  and which exports have already been read
+- `drop-archive/` — exports waiting to be read
+- `ingested/` — exports already read
+
+**What is never deleted.** Anything outside that folder. The drop folder is
+configurable, so somebody could point it at `~/Downloads`; deletion is confined
+to paths inside SocialMCP's own directory, symlinks are refused rather than
+followed, and standard folders — Downloads, Documents, Desktop, Library, your
+home directory — are rejected outright. Anything skipped is named in the
+output, so the tool never claims to have done more than it did. See
+`Config.deletable_data_paths` in
+[socialmcp/config.py](socialmcp/config.py) and the tests in
+[tests/test_privacy.py](tests/test_privacy.py) if you would rather read it than
+take our word for it.
+
+**Why dragging the app to the Trash leaves your data.** Deleting someone's
+notes as a side effect of removing an application is not a decision this
+software should make for them. The cost is a folder left in Application
+Support, so it contains a plain-text file explaining what it is, what is lost
+if you delete it, and how to remove both at once.
+
+Uninstall is otherwise the mirror of setup and holds to the same rule: it
+deletes only the `socialmcp` entry it created, leaves other MCP servers and
+unrelated settings alone, backs up every file it edits, and refuses to rewrite
+a config file it cannot parse. Notes and event names exist nowhere else, and no
+fresh export restores them.
 
 ## Privacy
 

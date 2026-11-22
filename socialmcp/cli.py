@@ -260,8 +260,11 @@ def _cmd_uninstall(args: argparse.Namespace, config) -> int:
     """
     from .clients import unregister_all
 
-    data_paths = [config.db_path, config.drop_dir, config.archive_dir]
-    present = [p for p in data_paths if p.exists()]
+    # Only paths inside SocialMCP's own folder may be deleted. `drop_dir` is
+    # user-configurable, so pointing it at ~/Downloads must not turn
+    # --purge-data into "delete my Downloads folder". See
+    # Config.deletable_data_paths.
+    present, refused = config.deletable_data_paths()
 
     print("This will remove SocialMCP's entry from your AI apps' settings.")
     print("Other MCP servers and unrelated settings are left untouched, and")
@@ -278,6 +281,13 @@ def _cmd_uninstall(args: argparse.Namespace, config) -> int:
         for path in present:
             print(f"    {path}")
         print("  (Add --purge-data to delete it, or remove the folder yourself later.)\n")
+
+    if refused:
+        print("Left alone, because these are not folders SocialMCP created:")
+        for path, reason in refused:
+            print(f"    {path}")
+            print(f"      {reason}")
+        print("  Delete them yourself if you want them gone.\n")
 
     if not args.dry_run and not args.yes:
         answer = input("Continue? [y/N] ").strip().lower()

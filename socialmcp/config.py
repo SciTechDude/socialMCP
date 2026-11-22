@@ -11,6 +11,7 @@ every setting must be reachable through an env var as well as the TOML file.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import tomllib
 from dataclasses import dataclass, field, replace
@@ -103,10 +104,111 @@ class Config:
             else self.drop_dir.parent / "ingested"
         )
 
+
+    def _write_folder_explainer(self) -> None:
+        """Leave a note in the data folder saying what it is.
+
+        Dragging the app to the Trash deliberately leaves the database behind:
+        deleting someone's notes as a side effect of removing an application
+        is not a choice this software should make for them. The cost of that
+        caution is an orphaned folder inside Application Support, which a user
+        has no reason to recognise months later — so it explains itself, says
+        what is lost if it goes, and how to remove it properly.
+        """
+        note = self.home / "ABOUT THIS FOLDER.txt"
+        if note.exists():
+            return
+        with contextlib.suppress(OSError):
+            # A folder that cannot be annotated is still a working folder.
+            note.write_text(
+                "This folder belongs to SocialMCP.\n"
+                "https://github.com/SciTechDude/socialMCP\n"
+                "\n"
+                "What is in here\n"
+                "  socialmcp.db    your contacts, your private notes, the names you\n"
+                "                  gave events, and which exports have been read\n"
+                "  drop-archive/   where a data export is placed to be read\n"
+                "  ingested/       exports already read, kept so they are not\n"
+                "                  read twice\n"
+                "\n"
+                "Nothing here is uploaded anywhere.\n"
+                "\n"
+                "If SocialMCP is gone and you want this folder gone too, deleting it\n"
+                "is safe and removes everything above. Be aware that a fresh export\n"
+                "from the social network can rebuild your contacts, but NOT the notes\n"
+                "you wrote or the event names you chose. Those exist only here.\n"
+                "\n"
+                "The app leaves this folder alone when you drag it to the Trash, on\n"
+                "purpose: deleting your notes as a side effect of removing an\n"
+                "application is not a decision it should make for you. To remove\n"
+                "both at once, open SocialMCP and choose Disconnect, then Delete my\n"
+                "data — or run `socialmcp uninstall --purge-data`.\n",
+                encoding="utf-8",
+            )
+
+    def deletable_data_paths(self) -> tuple[list[Path], list[tuple[Path, str]]]:
+        """Split this config's data paths into (safe to delete, refused).
+
+        Nobody reviews deletion code on our behalf: notarization is automated
+        malware scanning, and a directly-distributed Mac app never meets a
+        human reviewer. So the rules are enforced here rather than trusted to
+        the caller.
+
+        `drop_dir` and `home` are user-configurable, by TOML or environment
+        variable. Somebody who points the drop folder at ~/Downloads — a
+        reasonable-looking thing to try — must not lose their Downloads folder
+        to `--purge-data`. A path is therefore deleted only when it sits
+        inside the configured home, and never when it is the home directory, a
+        standard user folder, a filesystem root, or a symlink leading out of
+        the tree.
+
+        Refused paths are returned with a reason so the caller can say what it
+        declined to touch, rather than silently doing less than it claimed.
+        """
+        protected = {
+            Path("/"),
+            Path.home(),
+            Path.home() / "Downloads",
+            Path.home() / "Documents",
+            Path.home() / "Desktop",
+            Path.home() / "Library",
+            Path.home() / "Library" / "Application Support",
+        }
+
+        safe: list[Path] = []
+        refused: list[tuple[Path, str]] = []
+        try:
+            home = self.home.resolve()
+        except OSError:
+            return [], [(self.home, "its location could not be resolved")]
+
+        for path in (self.db_path, self.drop_dir, self.archive_dir):
+            if not path.exists():
+                continue
+            if path.is_symlink():
+                refused.append((path, "it is a symlink, and the target is not ours"))
+                continue
+            try:
+                resolved = path.resolve()
+            except OSError:
+                refused.append((path, "its location could not be resolved"))
+                continue
+            if resolved in protected or (resolved == home and path != self.home):
+                refused.append((path, "it is a standard folder, not one we created"))
+                continue
+            if resolved != home and home not in resolved.parents:
+                refused.append(
+                    (path, f"it is outside SocialMCP's own folder ({home})")
+                )
+                continue
+            safe.append(path)
+        return safe, refused
+
     def ensure_dirs(self) -> None:
         """Create the home, database, drop zone and per-source subfolders."""
         for path in (self.home, self.drop_dir, self.archive_dir, self.db_path.parent):
             path.mkdir(parents=True, exist_ok=True)
+        self._write_folder_explainer()
         if not self.create_source_dirs:
             return
         for folder, (source, _description) in DROP_SUBDIRS.items():

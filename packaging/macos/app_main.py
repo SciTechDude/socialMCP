@@ -1118,6 +1118,40 @@ def load_flow(config, drop: Path) -> int:
     return 0
 
 
+def _describe_data(config) -> str:
+    """What deletion would actually destroy, in the user's terms.
+
+    Paths tell a user where their data is; counts tell them what they are
+    about to lose. Contacts come back from a fresh export, notes and event
+    names do not, so the numbers are worth naming before a deletion rather
+    than after it.
+    """
+    try:
+        from socialmcp.core.db import open_database
+
+        db = open_database(config)
+        contacts = db.scalar("select count(*) from contacts") or 0
+        notes = db.scalar("select count(*) from interactions where kind = 'note'") or 0
+        named = (
+            db.scalar(
+                "select count(*) from event_clusters where name is not null"
+                " and name not like '%burst%'"
+            )
+            or 0
+        )
+    except Exception:  # a missing or unreadable database is not an error here
+        return "your SocialMCP data"
+
+    parts = [f"{contacts} contacts"]
+    if notes:
+        parts.append(f"{notes} notes")
+    if named:
+        parts.append(f"{named} named events")
+    if len(parts) == 1:
+        return parts[0]
+    return ", ".join(parts[:-1]) + f" and {parts[-1]}"
+
+
 def disconnect_flow(config) -> int:
     """Remove SocialMCP from the AI apps, and ask separately about the data.
 
@@ -1131,17 +1165,26 @@ def disconnect_flow(config) -> int:
     results = unregister_all()
     removed = [r for r in results if r.status == "removed"]
 
-    data_paths = [p for p in (config.db_path, config.drop_dir, config.archive_dir) if p.exists()]
+    # Only paths inside the app's own folder are offered for deletion; see
+    # Config.deletable_data_paths for why that matters.
+    data_paths, refused = config.deletable_data_paths()
     summary = [f"Disconnected from: {', '.join(r.client for r in removed) or 'nothing'}", ""]
     summary += ["Restart those apps to finish.", ""]
     if data_paths:
         summary += [
-            "Your data is still on this Mac:",
-            *[f"   {p}" for p in data_paths],
+            "Your data is still on this Mac: " + _describe_data(config),
             "",
-            "Keeping it means reconnecting later picks up exactly where you left off.",
-            "Deleting it also removes the notes you wrote and the event names you",
-            "chose, which no new export can bring back.",
+            "Keeping it means reconnecting later picks up exactly where you left"
+            " off. Deleting it also removes the notes you wrote and the event names"
+            " you chose, which no new export can bring back.",
+        ]
+    if refused:
+        # Say what was deliberately left alone, rather than quietly doing less
+        # than the button promised.
+        summary += [
+            "",
+            "Left untouched, because these are not folders SocialMCP created:",
+            *[f"   {path} — {reason}" for path, reason in refused],
         ]
     summary += ["", "To remove the app itself, drag SocialMCP to the Trash."]
 
@@ -1150,7 +1193,9 @@ def disconnect_flow(config) -> int:
         return 0
 
     confirmed = dialog(
-        "Delete the database, drop folder and processed archives?\n\n"
+        f"Delete {_describe_data(config)}?\n\n"
+        "Contacts can be rebuilt from a fresh export. Notes and event names"
+        " cannot — they exist nowhere else.\n\n"
         "This cannot be undone.",
         buttons=("Cancel", "Delete"),
     )
