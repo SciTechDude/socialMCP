@@ -206,14 +206,20 @@ if [[ "$SIGN" == "1" ]]; then
     [[ -n "$SUBMISSION_ID" ]] || { echo "error: no submission id returned" >&2; exit 1; }
 
     echo "==> Waiting for Apple to finish (submission $SUBMISSION_ID)"
-    # Exponential backoff, capped at five minutes. The notary service is rate
-    # limited per developer account, so a tight polling loop is both rude and
-    # risks being throttled. Most submissions clear in a few minutes; some sit
-    # in the queue far longer, and the delay then costs nothing to wait out.
+    # Exponential backoff, capped at half an hour, giving up after three.
+    #
+    # Both numbers come from observed behaviour, not taste. Submissions here
+    # have taken over two hours, so the previous one-hour ceiling declared a
+    # perfectly healthy submission dead and sent the build down the "do NOT
+    # rebuild" path for no reason. And the notary service is rate limited per
+    # developer account: polling a two-hour submission every five minutes is
+    # two dozen pointless requests that can earn throttling, which makes the
+    # wait longer still. Nothing is gained by asking sooner — the answer
+    # arrives when Apple is finished either way.
     NOTARY_STATUS="In Progress"
-    NOTARY_DELAY=20
+    NOTARY_DELAY=60
     NOTARY_WAITED=0
-    while (( NOTARY_WAITED < 3600 )); do        # give up after an hour
+    while (( NOTARY_WAITED < 10800 )); do       # give up after three hours
         sleep "$NOTARY_DELAY"
         NOTARY_WAITED=$(( NOTARY_WAITED + NOTARY_DELAY ))
         # `|| true` for the same reason as the submit above: a crashed or
@@ -225,13 +231,13 @@ if [[ "$SIGN" == "1" ]]; then
             awk '/^ *status: /{sub(/^ *status: /, ""); print; exit}' || true)"
         [[ "$NOTARY_STATUS" == "In Progress" || -z "$NOTARY_STATUS" ]] || break
         printf '.'
-        NOTARY_DELAY=$(( NOTARY_DELAY * 2 > 300 ? 300 : NOTARY_DELAY * 2 ))
+        NOTARY_DELAY=$(( NOTARY_DELAY * 2 > 1800 ? 1800 : NOTARY_DELAY * 2 ))
     done
     echo
     if [[ "$NOTARY_STATUS" == "In Progress" ]]; then
         cat >&2 <<EOF
-error: still queued at Apple after an hour. The upload succeeded, so do NOT
-       rebuild — that submits a second copy of the same file and consumes
+error: still queued at Apple after three hours. The upload succeeded, so do
+       NOT rebuild — that submits a second copy of the same file and consumes
        account capacity for nothing. Resume with:
 
   xcrun notarytool info $SUBMISSION_ID --keychain-profile "\$SOCIALMCP_NOTARY_PROFILE"
