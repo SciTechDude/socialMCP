@@ -1404,3 +1404,97 @@ def test_the_notice_file_does_not_overpromise():
         "the embedding provider is a real outbound request and must be named"
     )
     assert "can be switched off" in notice
+
+
+def test_the_terms_are_shown_before_anything_is_detected_or_written():
+    """Terms after the fact are decoration; they come first or not at all."""
+    source = (
+        Path(__file__).resolve().parent.parent / "packaging" / "macos" / "app_main.py"
+    ).read_text(encoding="utf-8")
+    flow = " ".join(source.split("def setup_flow(")[1].split("\ndef ")[0].split())
+
+    asked = flow.find("terms_flow()")
+    detected = flow.find("run_with_progress(")
+    wrote = flow.find("setup_all(")
+    assert asked != -1, "setup_flow never shows the terms"
+    assert asked < detected < wrote, (
+        "the terms must precede detection, which must precede any write"
+    )
+
+
+def test_declining_the_terms_writes_nothing(monkeypatch, tmp_path):
+    """Quit means quit: no config touched, no database, no marker."""
+    app = _load_app_main()
+    monkeypatch.setattr(app, "APP_SUPPORT", tmp_path / "appdata")
+    monkeypatch.setattr(app, "ask", lambda *_a, **_k: "Quit")
+
+    assert app.terms_flow() is False
+    assert not (tmp_path / "appdata" / "accepted-terms.json").exists(), (
+        "declining must not be recorded as acceptance"
+    )
+
+
+def test_consent_is_recorded_locally_and_asked_only_once(monkeypatch, tmp_path):
+    """Saved on this Mac, in the app's own folder, and never sent anywhere."""
+    app = _load_app_main()
+    appdata = tmp_path / "appdata"
+    monkeypatch.setattr(app, "APP_SUPPORT", appdata)
+
+    asked: list[str] = []
+
+    def once(message, **_kwargs):
+        asked.append(message)
+        return "Agree and continue"
+
+    monkeypatch.setattr(app, "ask", once)
+
+    assert app.terms_flow() is True
+    marker = appdata / "accepted-terms.json"
+    assert marker.exists(), "acceptance should be remembered"
+
+    import json
+
+    record = json.loads(marker.read_text(encoding="utf-8"))
+    assert record["fingerprint"] == app.terms_fingerprint()
+    assert "accepted_at" in record
+    # Nothing resembling an identifier, because this is never transmitted.
+    assert set(record) == {"fingerprint", "accepted_at"}, record
+
+    # Second launch: no question.
+    assert app.terms_flow() is True
+    assert len(asked) == 1, "the terms should be shown once, not every launch"
+
+
+def test_changed_terms_are_shown_again(monkeypatch, tmp_path):
+    """New wording is a new agreement, not one already given."""
+    app = _load_app_main()
+    appdata = tmp_path / "appdata"
+    monkeypatch.setattr(app, "APP_SUPPORT", appdata)
+    monkeypatch.setattr(app, "ask", lambda *_a, **_k: "Agree and continue")
+
+    assert app.terms_flow() is True
+    assert app.terms_accepted() is True
+
+    monkeypatch.setattr(app, "TERMS", app.TERMS + "\n\nAnd one new condition.")
+    assert app.terms_accepted() is False, (
+        "a fingerprint of the wording means changed terms are asked again"
+    )
+
+
+def test_the_terms_say_the_things_that_matter():
+    """The disclaimers have to be present in the words the user reads."""
+    app = _load_app_main()
+    terms = app.TERMS
+
+    for phrase in (
+        "Apache License 2.0",
+        "AS IS",
+        "no warranty",
+        "Nothing is uploaded",
+        "No analytics",
+        "never logs in",
+        "Deleting it deletes all of it",
+    ):
+        assert phrase in terms, f"the terms should state: {phrase!r}"
+    # The single outbound request must be disclosed rather than glossed over.
+    assert "local embedding model" in terms

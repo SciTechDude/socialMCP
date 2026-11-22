@@ -362,6 +362,92 @@ def _alert_via_bridge(
     return answer if answer in buttons else None
 
 
+TERMS = """SocialMCP reads a social network data export you already own and \
+keeps the result on this computer.
+
+  •  Free and open source under the Apache License 2.0.
+  •  Provided AS IS, with no warranty or condition of any kind, and no
+     liability for what it does or fails to do.
+  •  No account, no sign-in, no server. Nothing is uploaded.
+  •  No analytics and no telemetry are collected. Nobody is told you ran it.
+  •  It never logs in to any social network, and never uses your password or
+     cookies. It reads only the export file you choose.
+  •  Everything lives in one file on this Mac. Deleting it deletes all of it.
+  •  The one outbound request it can make is to a local embedding model you
+     choose to run, and it works without one.
+
+Connecting an AI app adds a socialmcp entry to that app's settings, after \
+backing the file up. You pick which apps, and nothing is written until you do.
+
+The full licence is on the disk image as LICENSE.txt, and `SocialMCP license` \
+prints it at any time."""
+
+
+def terms_fingerprint() -> str:
+    """Identifies this wording, so changed terms are shown again."""
+    import hashlib
+
+    return hashlib.sha256(TERMS.encode("utf-8")).hexdigest()[:16]
+
+
+def terms_accepted() -> bool:
+    """Has this wording been accepted on this Mac?"""
+    marker = APP_SUPPORT / "accepted-terms.json"
+    try:
+        import json
+
+        record = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return record.get("fingerprint") == terms_fingerprint()
+
+
+def record_terms_acceptance() -> None:
+    """Remember the acceptance, so it is asked once rather than every launch."""
+    import datetime
+    import json
+
+    try:
+        APP_SUPPORT.mkdir(parents=True, exist_ok=True)
+        (APP_SUPPORT / "accepted-terms.json").write_text(
+            json.dumps(
+                {
+                    "fingerprint": terms_fingerprint(),
+                    "accepted_at": datetime.datetime.now()
+                    .astimezone()
+                    .isoformat(timespec="seconds"),
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        # Unable to record it: better to ask again next time than to fail.
+        pass
+
+
+def terms_flow() -> bool:
+    """Show the terms once, before anything else happens. False means quit.
+
+    Deliberately the first thing on screen, and deliberately only once: it
+    comes before any app is detected or any file written, and the wording is
+    fingerprinted so a future change is shown again rather than assumed.
+    """
+    if terms_accepted():
+        trace("terms: already accepted")
+        return True
+
+    trace("terms: asking")
+    answer = ask(TERMS, title="SocialMCP — terms", buttons=("Quit", "Agree and continue"))
+    if answer != "Agree and continue":
+        trace("terms: declined, nothing written")
+        return False
+    record_terms_acceptance()
+    trace("terms: accepted")
+    return True
+
+
 def reveal(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["open", str(path)], check=False, timeout=30)
@@ -561,6 +647,10 @@ def setup_flow() -> int:
     # Everything lives under Application Support, not next to the .app, so
     # moving or replacing the app never touches the user's data.
     os.environ.setdefault("SOCIALMCP_HOME", str(APP_SUPPORT))
+
+    # Terms first, before anything is detected or written.
+    if not terms_flow():
+        return 0
 
     # A window appears before any of the work below. A double-click that shows
     # nothing for several seconds reads as a broken app, and a permission
