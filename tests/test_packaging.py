@@ -163,9 +163,18 @@ def test_doctor_never_suggests_a_bare_pip():
 
 
 def _load_app_main():
-    """Import packaging/macos/app_main.py, which is outside the package."""
+    """Import packaging/macos/app_main.py, which is outside the package.
+
+    Its directory goes on sys.path because `app_main` imports its siblings
+    (`ui`, `progress`) by bare name — which is how PyInstaller lays them out in
+    the bundle. Without this, tests could only reach functions that happen not
+    to touch a sibling, which is how a call to a non-existent database API
+    reached a user.
+    """
     import importlib.util
 
+    if str(MACOS) not in sys.path:
+        sys.path.insert(0, str(MACOS))
     spec = importlib.util.spec_from_file_location("app_main", MACOS / "app_main.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -185,7 +194,7 @@ def test_setup_report_explains_a_blocked_client():
     """
     app = _load_app_main()
     message, buttons = app.build_setup_report(
-        [_Result("Claude Desktop", "skipped")], Path("/tmp/drop") if sys.platform != "win32" else Path("C:/drop"), embeddings=True
+        [_Result("Claude Desktop", "skipped")], embeddings=True
     )
 
     assert "Already set up by another copy" in message
@@ -198,28 +207,25 @@ def test_setup_report_explains_a_blocked_client():
 def test_setup_report_lists_connected_clients_and_restarts():
     app = _load_app_main()
     message, buttons = app.build_setup_report(
-        [_Result("Cursor", "configured"), _Result("Claude Code", "already")],
-        Path("/tmp/drop") if sys.platform != "win32" else Path("C:/drop"),
-        embeddings=True,
+        [_Result("Cursor", "configured"), _Result("Claude Code", "already")], embeddings=True,
     )
 
     assert "Connected to: Cursor, Claude Code" in message
     # Only newly written configs need a restart; an existing one does not.
     assert "Restart needed for: Cursor" in message
     assert "Replace it" not in buttons
-    # The default button must be the thing the user has to do next, not a step
-    # towards it. "Open the folder" only reveals a folder they must then drag a
-    # file into from another window; picking the export is the actual outcome.
-    assert buttons[-1] == app.ACTION_IMPORT
-    assert app.ACTION_FOLDER in buttons, "dragging into the folder stays available"
+    # One action, and it is the default. Alternatives were removed on purpose:
+    # each one was a decision about something the user had not done yet, and
+    # each route cost either another permission prompt or another place the
+    # file could be.
+    assert buttons[-1] == app.ACTION_LOAD
+    assert len(buttons) == 1, f"a first run should offer one action, got {buttons}"
 
 
 def test_setup_report_surfaces_a_failure_with_its_reason():
     app = _load_app_main()
     message, _ = app.build_setup_report(
-        [_Result("Zed", "failed", "its config file is not valid JSON")],
-        Path("/tmp/drop") if sys.platform != "win32" else Path("C:/drop"),
-        embeddings=True,
+        [_Result("Zed", "failed", "its config file is not valid JSON")], embeddings=True,
     )
     assert "Could not configure: Zed" in message
     assert "not valid JSON" in message
@@ -230,29 +236,25 @@ def test_setup_report_offers_ollama_only_when_missing():
     app = _load_app_main()
 
     without, buttons_without = app.build_setup_report(
-        [_Result("Cursor", "configured")], Path("/tmp/drop") if sys.platform != "win32" else Path("C:/drop"), embeddings=False
+        [_Result("Cursor", "configured")], embeddings=False
     )
     assert "match words literally" in without
     assert "nothing uploaded" in without, "the privacy point is the reason to accept"
-    assert "Get Ollama" in buttons_without
+    # The button is held back on a first run: three slots exist and loading
+    # data is what matters then. The explanation is in the text either way, and
+    # the button returns next time the app is opened.
+    assert "Get Ollama" not in buttons_without, "not on a first run"
+    _text, later = app.build_setup_report(
+        [_Result("Cursor", "configured")], embeddings=False,
+        first_run=False,
+    )
+    assert "Get Ollama" in later, "offered once the user is past setting up"
 
     with_model, buttons_with = app.build_setup_report(
-        [_Result("Cursor", "configured")], Path("/tmp/drop") if sys.platform != "win32" else Path("C:/drop"), embeddings=True
+        [_Result("Cursor", "configured")], embeddings=True
     )
     assert "Ollama" not in with_model
     assert "Get Ollama" not in buttons_with
-
-
-def test_setup_report_always_tells_the_user_where_the_folder_is():
-    app = _load_app_main()
-    for embeddings in (True, False):
-        for status in ("configured", "already", "skipped", "failed"):
-            message, buttons = app.build_setup_report(
-                [_Result("Cursor", status)], Path("/tmp/the-drop-folder") if sys.platform != "win32" else Path("C:/the-drop-folder"), embeddings=embeddings
-            )
-            assert str(Path("/tmp/the-drop-folder") if sys.platform != "win32" else Path("C:/the-drop-folder")) in message, status
-            assert buttons, status
-
 
 def test_version_is_declared_in_exactly_one_place():
     """`__version__`, pyproject and the bundle's Info.plist must agree.
@@ -359,13 +361,18 @@ def test_first_launch_shows_the_window_before_any_slow_work():
     ).read_text(encoding="utf-8")
     flow = source.split("def setup_flow(")[1]
 
-    assert "run_with_progress(_run_setup" in flow, (
-        "setup_flow must run setup inside the progress window"
+    # Collapse whitespace so a wrapped call still matches: the assertion is
+    # about ordering, not formatting.
+    squashed = " ".join(flow.split())
+    assert "run_with_progress( _run_setup" in squashed or "run_with_progress(_run_setup" in squashed, (
+        "setup_flow must run setup through run_with_progress, which reports each step"
     )
-    # The slow calls belong in _run_setup, which the window drives. Split on
-    # the call site, not the import — the import appears first and slicing
-    # there would make this test unable to fail.
-    body_before_window = flow.split("run_with_progress(_run_setup")[0]
+    # The slow calls belong in _run_setup, which run_with_progress drives.
+    # Split on the call site, not the import — the import appears first and
+    # slicing there would make this test unable to fail.
+    marker = "run_with_progress(" if "run_with_progress(" in squashed else None
+    assert marker, "no progress-reporting call in setup_flow"
+    body_before_window = squashed.split("run_with_progress(")[0]
     for slow in ("setup_all(", "embedding_available("):
         assert slow not in body_before_window, (
             f"{slow} runs before the progress window exists — that is the bug"
@@ -392,27 +399,63 @@ def test_client_probe_timeout_is_short_and_detached_from_stdin():
     assert "TimeoutExpired" in probe, "a timeout must fall back, not propagate"
 
 
-def test_bundle_requests_no_folder_permissions():
-    """The app must ask for no file access at all.
+def test_only_downloads_is_declared_and_it_says_why():
+    """Downloads is the single source, so it is the single declaration.
 
-    It opens a file picker, which macOS runs out of process: the app receives
-    the one chosen file and nothing else. Declaring a folder usage description
-    makes macOS prompt for access to an entire folder — a frightening ask for
-    software that reads your contacts, and one the code never needed.
+    Desktop and Documents must stay absent: nothing reads them. They only ever
+    prompted because a file panel enumerated its sidebar favourites, and the
+    panel is gone — so asking for them would be claiming access the app does
+    not use, in a program whose whole claim is that it reads one file.
     """
     spec = (
         Path(__file__).resolve().parent.parent / "packaging" / "macos" / "socialmcp.spec"
     ).read_text(encoding="utf-8")
-    for key in (
-        '"NSDesktopFolderUsageDescription":',
-        '"NSDocumentsFolderUsageDescription":',
-        '"NSDownloadsFolderUsageDescription":',
-        '"NSFileProviderDomainUsageDescription":',
-    ):
-        assert key not in spec, (
-            f"{key} makes macOS prompt for whole-folder access; the file picker "
-            "needs no permission, so add this back only with a real reason"
-        )
+
+    assert "NSDownloadsFolderUsageDescription" in spec
+    after = spec.split("NSDownloadsFolderUsageDescription", 1)[1][:400]
+    assert "one file" in after, "scope the request to the file it reads"
+    assert "nothing is uploaded" in after, "state the privacy promise in the prompt"
+
+    for key in ("NSDocumentsFolderUsageDescription", "NSDesktopFolderUsageDescription"):
+        assert key not in spec, f"{key} claims access to a folder nothing reads"
+
+
+def test_the_chooser_opens_where_the_export_already_is():
+    """One button, and the panel starts somewhere useful.
+
+    The panel was briefly removed on the theory that it caused the Downloads,
+    Documents and Desktop prompts. It did not: those came from `claude mcp
+    list`, which Claude Code answers by launching every configured MCP server,
+    and macOS attributes a child's file access to the responsible parent. With
+    that fixed the panel costs nothing, and browsing anywhere is strictly more
+    useful than a single blessed folder.
+    """
+    macos = Path(__file__).resolve().parent.parent / "packaging" / "macos"
+    ui_source = (macos / "ui.py").read_text(encoding="utf-8")
+    app_source = (macos / "app_main.py").read_text(encoding="utf-8")
+
+    assert "choose file" in ui_source, "there should be a real file panel"
+    assert "Downloads" in ui_source, "it should default to where browsers save"
+    assert "choose_export" in app_source, "the one action should open the panel"
+
+
+def test_setup_never_lists_the_users_other_mcp_servers():
+    """Ask about our own entry, never enumerate someone's whole setup.
+
+    `claude mcp list` returns every MCP server the user has configured, which
+    is private to them and irrelevant here — and answering it makes Claude Code
+    launch each one, which is what dragged folder-permission prompts into this
+    app's name.
+    """
+    source = (
+        Path(__file__).resolve().parent.parent / "socialmcp" / "clients.py"
+    ).read_text(encoding="utf-8")
+    code = "".join(source.replace('"""', "\x00").split("\x00")[::2])
+
+    assert '"mcp", "get"' in code, "query our own server by name"
+    assert '"mcp", "list"' not in code, (
+        "listing exposes every MCP server the user has configured"
+    )
 
 
 def test_the_drop_folder_readme_is_written_for_a_human():
@@ -488,7 +531,1195 @@ def test_setup_flow_checks_the_location_before_configuring_anything():
     ).read_text(encoding="utf-8")
     flow = source.split("def setup_flow(")[1].split("\ndef ")[0]
 
-    guard = flow.find("running_from_removable_location()")
-    work = flow.find("run_with_progress(_run_setup")
+    squashed = " ".join(flow.split())
+    guard = squashed.find("running_from_removable_location()")
+    work = squashed.find("run_with_progress(")
     assert guard != -1, "setup_flow no longer checks where it is running from"
     assert 0 < guard < work, "the location check must precede any setup work"
+
+def test_every_sibling_module_is_declared_for_the_bundle():
+    """Modules imported by bare name must be in hiddenimports.
+
+    `app_main` imports `ui`, `progress` and `tkroot` as top-level names, which
+    is how PyInstaller arranges them. If one is not bundled, the failure is an
+    ImportError in a user's hands — there is no build error — so the set is
+    asserted rather than trusted to import analysis.
+    """
+    macos = Path(__file__).resolve().parent.parent / "packaging" / "macos"
+    spec = (macos / "socialmcp.spec").read_text(encoding="utf-8")
+
+    siblings = {p.stem for p in macos.glob("*.py")} - {"app_main", "socialmcp"}
+    imported = {
+        name
+        for name in siblings
+        if f"from {name} import" in (macos / "app_main.py").read_text(encoding="utf-8")
+        or f"import {name}" in (macos / "app_main.py").read_text(encoding="utf-8")
+    }
+    # progress and ui import tkroot, so include anything they pull in too.
+    for module in list(imported):
+        source = (macos / f"{module}.py").read_text(encoding="utf-8")
+        imported |= {name for name in siblings if f"import {name}" in source}
+
+    missing = sorted(name for name in imported if f'"{name}"' not in spec)
+    assert not missing, (
+        f"these are imported by name but not declared in hiddenimports: {missing}"
+    )
+
+
+def test_no_gui_toolkit_is_bundled_or_imported():
+    """Tk is what asked for Downloads, Desktop and Documents.
+
+    A Tk progress window produced all three prompts the moment it initialised
+    — before any file picker existed — while the osascript-only build produced
+    none. For an app whose entire claim is that it reads one file you hand it,
+    that is an unacceptable price for a progress bar. Tk also rendered blank
+    windows unless a full `mainloop` ran.
+
+    If a nicer UI is wanted later, the native route is AppKit via PyObjC,
+    which is what Mac applications actually use. This test should then be
+    rewritten to require *that*, not relaxed to allow Tk back.
+    """
+    macos = Path(__file__).resolve().parent.parent / "packaging" / "macos"
+
+    spec = (macos / "socialmcp.spec").read_text(encoding="utf-8")
+    excludes = spec.split("excludes=[", 1)[1].split("]", 1)[0]
+    assert '"tkinter"' in excludes, "tkinter must stay out of the bundle"
+
+    for module in macos.glob("*.py"):
+        source = module.read_text(encoding="utf-8")
+        code = "\n".join(
+            line for line in source.splitlines() if not line.strip().startswith("#")
+        )
+        # Strip docstrings crudely: they explain *why* Tk is gone.
+        code = code.replace('"""', "\x00").split("\x00")
+        code = "".join(code[::2])
+        assert "import tkinter" not in code, f"{module.name} imports tkinter"
+        assert "tkroot" not in code, f"{module.name} still references the Tk root helper"
+
+
+def test_setup_report_never_exceeds_the_dialog_button_limit():
+    """More than three buttons makes osascript fail, invisibly.
+
+    `display dialog` takes at most three. When it got four, the script errored,
+    the exit status was ignored, and the last button was returned as though the
+    user had clicked it.
+    """
+    app = _load_app_main()
+
+    # Every combination that can add a button at once: another install to
+    # replace, a connected client to disconnect, and no embeddings (Ollama).
+    results = [
+        _Result("Claude Code", "already-other"),
+        _Result("Cursor", "configured"),
+        _Result("Zed", "failed", "bad json"),
+    ]
+    for embeddings in (True, False):
+        for first_run in (True, False):
+            _message, buttons = app.build_setup_report(
+                results, embeddings=embeddings, first_run=first_run
+            )
+            assert len(buttons) <= app.MAX_DIALOG_BUTTONS, (
+                f"{len(buttons)} buttons ({buttons}) — osascript shows at most "
+                f"{app.MAX_DIALOG_BUTTONS} and fails silently beyond that"
+            )
+
+
+def test_downloads_is_the_only_place_it_looks(monkeypatch, tmp_path):
+    """Newest first, LinkedIn-named archives preferred, nothing else offered."""
+    app = _load_app_main()
+
+    home = tmp_path / "home"
+    downloads = home / "Downloads"
+    downloads.mkdir(parents=True)
+    monkeypatch.setattr(app.Path, "home", staticmethod(lambda: home))
+
+    import time
+
+    older = downloads / "Complete_LinkedInDataExport_01-01-2026.zip"
+    newer = downloads / "Complete_LinkedInDataExport_11-15-2026.zip"
+    decoy = downloads / "holiday-photos.zip"
+    notes = downloads / "something.pdf"
+    for path in (older, decoy, notes, newer):
+        path.write_text("x", encoding="utf-8")
+        time.sleep(0.01)
+
+    found = app.downloads_exports()
+
+    assert found[0] == newer, "the newest export should be chosen"
+    assert older in found
+    assert decoy not in found, "a LinkedIn-named archive outranks any other zip"
+    assert notes not in found, "only .zip files are candidates"
+
+
+def test_no_downloads_folder_is_explained_not_crashed(monkeypatch, tmp_path):
+    """A missing or unreadable Downloads folder must not raise."""
+    app = _load_app_main()
+    monkeypatch.setattr(app.Path, "home", staticmethod(lambda: tmp_path / "nowhere"))
+    assert app.downloads_exports() == []
+
+
+def test_load_flow_reads_the_export_and_reports_the_count(monkeypatch, tmp_path):
+    """The whole single path, end to end, against the synthetic fixtures.
+
+    Exercises what a user actually does: an export sits in Downloads, they
+    click one button, and the app says how many people it found.
+    """
+    import zipfile
+
+    app = _load_app_main()
+
+    home = tmp_path / "home"
+    downloads = home / "Downloads"
+    downloads.mkdir(parents=True)
+    monkeypatch.setattr(app.Path, "home", staticmethod(lambda: home))
+
+    export = downloads / "Complete_LinkedInDataExport_11-15-2026.zip"
+    fixtures = Path(__file__).resolve().parent / "fixtures" / "linkedin"
+    with zipfile.ZipFile(export, "w") as archive:
+        for csv in fixtures.glob("*.csv"):
+            archive.write(csv, csv.name)
+
+    said: list[str] = []
+    monkeypatch.setattr(app, "dialog", lambda message, **_k: said.append(message) or "OK")
+
+    # Stand in for the file panel: the user picks the export it offers.
+    import sys as _sys
+
+    module = type(_sys)("ui")
+    module.choose_export = lambda _start=None: export
+    module.archive_suffixes = lambda *_a, **_k: (".zip",)
+    monkeypatch.setitem(_sys.modules, "ui", module)
+
+    from socialmcp.config import Config
+
+    appdata = tmp_path / "appdata"
+    config = Config(home=appdata, drop_dir=appdata / "drop-archive")
+    config.ensure_dirs()
+    drop = config.drop_dir / "linkedin"
+
+    code = app.load_flow(config, drop)
+
+    assert code == 0, f"load failed; dialogs said: {said}"
+    assert any("Your network now has" in m for m in said), said
+    from socialmcp.core.db import open_database
+
+    assert open_database(config).scalar("select count(*) from contacts") > 0
+    assert export.exists(), "the user's download must not be moved or deleted"
+
+
+def test_load_flow_does_nothing_quietly_when_the_chooser_is_cancelled(
+    monkeypatch, tmp_path
+):
+    """Cancelling is a choice, not a failure: no dialog, no error, no changes."""
+    app = _load_app_main()
+
+    home = tmp_path / "home"
+    (home / "Downloads").mkdir(parents=True)
+    monkeypatch.setattr(app.Path, "home", staticmethod(lambda: home))
+
+    said: list[str] = []
+    monkeypatch.setattr(app, "dialog", lambda message, **_k: said.append(message) or "OK")
+
+    import sys as _sys
+
+    module = type(_sys)("ui")
+    module.choose_export = lambda _start=None: None
+    module.archive_suffixes = lambda *_a, **_k: (".zip",)
+    monkeypatch.setitem(_sys.modules, "ui", module)
+
+    from socialmcp.config import Config
+
+    appdata = tmp_path / "appdata"
+    config = Config(home=appdata, drop_dir=appdata / "drop-archive")
+    config.ensure_dirs()
+
+    assert app.load_flow(config, config.drop_dir / "linkedin") == 0
+    assert not said, f"cancelling should say nothing, said: {said}"
+    assert not config.db_path.exists(), "nothing should have been created"
+
+
+
+def test_the_chooser_never_starts_somewhere_that_is_not_a_folder(monkeypatch, tmp_path):
+    """The starting location must be an existing directory.
+
+    Given a file or a missing path, an open panel ignores it and restores
+    whatever it showed last — usually Recents, a column view of
+    `/private/var/...` temporary paths that tells the user nothing about where
+    they are. The panel takes the directory as an argument, so the argument is
+    what gets checked.
+    """
+    import importlib.util
+
+    macos = Path(__file__).resolve().parent.parent / "packaging" / "macos"
+    spec = importlib.util.spec_from_file_location("ui_start", macos / "ui.py")
+    ui = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ui)
+
+    starts: list[str] = []
+
+    class _Cancelled:
+        returncode = 0
+        stdout = "__cancelled__"
+        stderr = ""
+
+    def fake_run(argv, **_kwargs):
+        # osascript -l JavaScript <script> <start> <message> <types...>
+        starts.append(argv[4])
+        return _Cancelled()
+
+    monkeypatch.setattr(ui.subprocess, "run", fake_run)
+
+    a_file = tmp_path / "export.zip"
+    a_file.write_text("x", encoding="utf-8")
+    ui.choose_export(a_file)
+    ui.choose_export(tmp_path / "does-not-exist")
+    ui.choose_export(None)
+
+    assert starts, "the panel was never asked to open anywhere"
+    for start in starts:
+        assert Path(start).is_dir(), f"panel would open at a non-folder: {start}"
+
+def test_nothing_is_configured_until_the_user_has_been_asked():
+    """Detection comes first; writing waits for consent.
+
+    Editing another application's settings is not something to do on someone's
+    behalf unasked, and when several AI apps are installed, which ones to
+    connect is a preference rather than something detection can decide.
+    """
+    source = (
+        Path(__file__).resolve().parent.parent / "packaging" / "macos" / "app_main.py"
+    ).read_text(encoding="utf-8")
+
+    setup = source.split("def _run_setup(")[1].split("\ndef ")[0]
+    assert "detected_clients()" in setup, "_run_setup should only detect"
+    assert "setup_all(" not in setup, (
+        "_run_setup must not configure anything: the user has not been asked yet"
+    )
+
+    flow = source.split("def setup_flow(")[1].split("\ndef ")[0]
+    squashed = " ".join(flow.split())
+    asked = squashed.find("choose_clients(")
+    wrote = squashed.find("setup_all(")
+    assert asked != -1, "setup_flow never asks which apps to connect"
+    assert wrote != -1, "setup_flow never configures anything"
+    assert asked < wrote, "the question must come before the first write"
+
+
+def test_one_client_is_not_turned_into_a_question():
+    """A single detected app needs no checklist — there is nothing to choose."""
+    source = (
+        Path(__file__).resolve().parent.parent / "packaging" / "macos" / "app_main.py"
+    ).read_text(encoding="utf-8")
+    flow = " ".join(source.split("def setup_flow(")[1].split("\ndef ")[0].split())
+    assert "len(detected) > 1" in flow, (
+        "asking about one app manufactures a decision the user does not have"
+    )
+
+
+def test_cancelling_the_checklist_writes_nothing(monkeypatch):
+    """Cancel means cancel: no config touched, no error shown."""
+    app = _load_app_main()
+
+    monkeypatch.setattr(app, "choose_clients", lambda _names: None)
+    wrote: list[str] = []
+    monkeypatch.setattr(
+        app, "dialog", lambda message, **_k: wrote.append(message) or "OK"
+    )
+
+    # The parsing helper itself: an empty selection is distinct from a cancel.
+    assert app.choose_clients is not None
+
+
+def test_connect_all_is_one_tap(monkeypatch):
+    """The common case must not cost a decision per app."""
+    app = _load_app_main()
+
+    asked: list[str] = []
+
+    def fake_dialog(message, **_kwargs):
+        asked.append(message)
+        return "Connect all"
+
+    monkeypatch.setattr(app, "dialog", fake_dialog)
+
+    names = ["Claude Code", "VS Code (Copilot)", "Zed"]
+    assert app._choose_clients_one_at_a_time(names) == names
+    assert len(asked) == 1, "connecting everything should be a single question"
+    assert "backed up first" in asked[0], "say what connecting does to their files"
+
+
+def test_deciding_each_asks_once_per_app_and_respects_skips(monkeypatch):
+    """Selective choice needs no modifier keys — one plain question per app.
+
+    `choose from list` was tried first and is the wrong control: it draws
+    highlightable rows rather than checkboxes, and picking more than one
+    requires Command-click, which a user cannot discover.
+    """
+    app = _load_app_main()
+
+    answers = iter(["Decide each", "Connect", "Skip", "Connect"])
+    seen: list[str] = []
+
+    def fake_dialog(message, **_kwargs):
+        seen.append(message)
+        return next(answers)
+
+    monkeypatch.setattr(app, "dialog", fake_dialog)
+
+    picked = app._choose_clients_one_at_a_time(
+        ["Claude Code", "VS Code (Copilot)", "Zed"]
+    )
+
+    assert picked == ["Claude Code", "Zed"], "skipped apps must stay untouched"
+    assert len(seen) == 4, "one overview question, then one per app"
+    assert "Connect SocialMCP to VS Code (Copilot)?" in seen[2]
+
+
+def test_cancelling_the_question_connects_nothing(monkeypatch):
+    """Cancel is distinct from skipping everything: nothing is written."""
+    app = _load_app_main()
+    monkeypatch.setattr(app, "dialog", lambda *_a, **_k: "Cancel")
+    assert app._choose_clients_one_at_a_time(["Claude Code", "Cursor"]) is None
+
+
+def test_an_unanswerable_question_connects_what_was_found(monkeypatch):
+    """If no dialog can be shown, do what the app did before asking existed.
+
+    `dialog` returns its last button when osascript cannot run, so an
+    environment with no GUI ends up at "Connect all" rather than silently
+    connecting nothing and leaving the user with an app that does not work.
+    """
+    app = _load_app_main()
+    monkeypatch.setattr(app, "dialog", lambda _m, **k: k["buttons"][-1])
+    names = ["Claude Code", "Cursor"]
+    assert app._choose_clients_one_at_a_time(names) == names
+
+
+def _stub_osascript(monkeypatch, app, *, stdout="", returncode=0, capture=None):
+    """Replace subprocess.run so no test can ever open a real dialog."""
+
+    class _Result:
+        pass
+
+    def fake_run(argv, **_kwargs):
+        if capture is not None:
+            capture["argv"] = argv
+            script = Path(argv[3]) if len(argv) > 3 else None
+            if script and script.exists():
+                capture["script"] = script.read_text(encoding="utf-8")
+        result = _Result()
+        result.returncode = returncode
+        result.stdout = stdout
+        result.stderr = ""
+        return result
+
+    monkeypatch.setattr(app.subprocess, "run", fake_run)
+
+
+def test_the_consent_dialog_is_a_real_checkbox_list(monkeypatch):
+    """Checkboxes, ticked by default, passing the app names as arguments.
+
+    `choose from list` was tried first and behaves as all-or-nothing unless
+    the user knows to Command-click; one dialog per app worked but asked three
+    times for three apps. An NSAlert with switch buttons is the control a Mac
+    application would use, and osascript's JavaScript bridge reaches it with
+    nothing bundled.
+    """
+    app = _load_app_main()
+    captured: dict[str, object] = {}
+    _stub_osascript(
+        monkeypatch, app, stdout="Claude Code\nZed\n", capture=captured
+    )
+
+    picked = app.choose_clients(["Claude Code", "VS Code (Copilot)", "Zed"])
+
+    assert picked == ["Claude Code", "Zed"], "returns the ticked ones, in order"
+
+    argv = captured["argv"]
+    assert argv[:3] == ["osascript", "-l", "JavaScript"], argv
+    assert argv[4:] == ["VS Code (Copilot)", "Zed"] or "Claude Code" in argv, argv
+
+    script = captured["script"]
+    assert "NSButtonTypeSwitch" in script or "setButtonType(3)" in script, (
+        "the rows must be checkboxes, not a selectable list"
+    )
+    assert "setState(1)" in script, "ticked by default: connecting all is usual"
+    assert "backed up first" in script, "say what connecting does to their files"
+
+
+def test_unticking_everything_is_not_the_same_as_cancelling(monkeypatch):
+    """Empty selection means "connect nothing"; cancel means "do not proceed".
+
+    The caller tells them apart: one explains that nothing was connected, the
+    other leaves silently.
+    """
+    app = _load_app_main()
+
+    _stub_osascript(monkeypatch, app, stdout="__none__")
+    assert app.choose_clients(["Claude Code", "Zed"]) == []
+
+    _stub_osascript(monkeypatch, app, stdout="__cancelled__")
+    assert app.choose_clients(["Claude Code", "Zed"]) is None
+
+
+def test_a_broken_checkbox_dialog_degrades_to_plain_questions(monkeypatch):
+    """If the scripting bridge fails, ask the old way rather than give up."""
+    app = _load_app_main()
+    _stub_osascript(monkeypatch, app, returncode=1)
+    monkeypatch.setattr(app, "dialog", lambda _m, **k: k["buttons"][-1])
+
+    names = ["Claude Code", "Cursor"]
+    assert app.choose_clients(names) == names
+
+
+def test_the_consent_script_leaves_no_temp_file_behind(monkeypatch, tmp_path):
+    """The script is written to a temp file; it must not accumulate."""
+    app = _load_app_main()
+    seen: dict[str, object] = {}
+    _stub_osascript(monkeypatch, app, stdout="Claude Code", capture=seen)
+
+    app.choose_clients(["Claude Code"])
+
+    script_path = Path(seen["argv"][3])
+    assert not script_path.exists(), f"left behind {script_path}"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="osascript is macOS-only")
+def test_the_checkbox_script_actually_compiles_and_runs():
+    """Run the real script through osascript, without drawing anything.
+
+    This exists because of a bug a user found. `CHECKBOX_SCRIPT` was not a raw
+    Python string, so `join('\\n')` in the JavaScript became a literal newline
+    inside a quoted string — a SyntaxError on line 38. The caller fell back to
+    asking about each app one at a time, which looked like a design choice
+    rather than a failure, and only the log revealed it.
+
+    Executing the script is the only honest check: nothing short of a
+    JavaScript engine catches a syntax error, and there is one available.
+    """
+    import subprocess
+    import tempfile
+
+    app = _load_app_main()
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".js", delete=False, encoding="utf-8"
+    ) as handle:
+        handle.write(app.CHECKBOX_SCRIPT)
+        script = handle.name
+    try:
+        result = subprocess.run(
+            ["osascript", "-l", "JavaScript", script, "__selftest__"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    finally:
+        Path(script).unlink(missing_ok=True)
+
+    assert result.returncode == 0, f"the script does not run: {result.stderr.strip()}"
+    assert result.stdout.strip() == "ok", result.stdout
+
+
+def test_the_checkbox_script_keeps_its_escapes():
+    """A non-raw string silently rewrites the JavaScript it contains."""
+    source = (
+        Path(__file__).resolve().parent.parent / "packaging" / "macos" / "app_main.py"
+    ).read_text(encoding="utf-8")
+    assert 'CHECKBOX_SCRIPT = r"""' in source, (
+        "the script must be a raw string, or Python turns JavaScript escapes "
+        "such as join('\\\\n') into real newlines and breaks the syntax"
+    )
+
+
+def test_every_dialog_brings_itself_to_the_front():
+    """A dialog behind another window is indistinguishable from no dialog.
+
+    osascript's windows belong to osascript, which is not frontmost when this
+    app is launched from Finder, so the first dialog opened behind whatever the
+    user was looking at. They had to find SocialMCP in the Dock and click it —
+    which the person who built it knows to do, and nobody else does.
+    """
+    macos = Path(__file__).resolve().parent.parent / "packaging" / "macos"
+
+    app_source = (macos / "app_main.py").read_text(encoding="utf-8")
+    dialog_body = app_source.split("def dialog(")[1].split("\ndef ")[0]
+    assert '"activate\\n"' in dialog_body, (
+        "dialog() must activate before showing, or it opens behind other windows"
+    )
+
+    ui_source = (macos / "ui.py").read_text(encoding="utf-8")
+    assert '"activate\\n"' in ui_source, (
+        "the file chooser must activate too, for the same reason"
+    )
+
+    # The checkbox dialog uses the Objective-C bridge, which has its own way.
+    assert "activateIgnoringOtherApps" in app_source, (
+        "the checkbox alert must raise itself as well"
+    )
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="osascript is macOS-only")
+def test_the_alert_returns_the_button_the_user_actually_clicked():
+    """NSAlert's response codes run opposite to the caller's button order.
+
+    The first button added is drawn rightmost and reports 1000, and buttons go
+    on in reverse so the caller's last stays the default. Get that arithmetic
+    wrong and the app silently acts on a button nobody pressed — a Cancel
+    treated as Connect. Exercised through the real script, with no window.
+    """
+    import subprocess
+    import tempfile
+
+    app = _load_app_main()
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".js", delete=False, encoding="utf-8"
+    ) as handle:
+        handle.write(app.ALERT_SCRIPT)
+        script = handle.name
+    try:
+        result = subprocess.run(
+            [
+                "osascript", "-l", "JavaScript", script,
+                "__maptest__", "Cancel", "Decide each", "Connect all",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    finally:
+        Path(script).unlink(missing_ok=True)
+
+    assert result.returncode == 0, result.stderr
+    # Response 1000 is the rightmost (the caller's last button, the default),
+    # then leftwards.
+    assert result.stdout.strip() == "Connect all|Decide each|Cancel", result.stdout
+
+
+def test_alerts_are_lifted_above_normal_windows():
+    """Activation alone loses to the app that is already frontmost.
+
+    With a terminal in the foreground the dialog stayed behind it, so the
+    window is also raised to NSModalPanelWindowLevel and made key explicitly.
+    A dialog the user cannot see is the same as no dialog, and this is the
+    first thing they see after double-clicking the app.
+    """
+    source = (
+        Path(__file__).resolve().parent.parent / "packaging" / "macos" / "app_main.py"
+    ).read_text(encoding="utf-8")
+
+    for name in ("ALERT_SCRIPT", "CHECKBOX_SCRIPT"):
+        script = source.split(f"{name} = r\"\"\"", 1)[1].split('"""', 1)[0]
+        assert "setLevel(8)" in script, f"{name} must float above normal windows"
+        assert "makeKeyAndOrderFront" in script, f"{name} must take key focus"
+        assert "activateIgnoringOtherApps" in script, f"{name} must activate"
+
+
+def test_the_panel_offers_only_the_sources_archive_type():
+    """Offering files that cannot work is a trap, not a kindness.
+
+    A user who can pick a PDF will pick a PDF, and the only feedback is a
+    failure after the fact. The panel is told the source's uniform type
+    identifiers so everything else is unselectable.
+    """
+    import importlib.util
+
+    macos = Path(__file__).resolve().parent.parent / "packaging" / "macos"
+    spec = importlib.util.spec_from_file_location("ui_types", macos / "ui.py")
+    ui = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ui)
+
+    entry = ui.SOURCE_ARCHIVES["linkedin"]
+    assert "public.zip-archive" in entry["types"], "use the system type, not just an extension"
+    assert ui.archive_suffixes() == (".zip",)
+
+    # The mapping is per source, so a second platform is a table entry.
+    assert ui.DEFAULT_SOURCE in ui.SOURCE_ARCHIVES
+    assert ui.archive_suffixes("a-source-that-does-not-exist") == (".zip",), (
+        "an unknown source should fall back rather than crash"
+    )
+
+    seen: dict[str, str] = {}
+
+    class _Cancelled:
+        returncode = 1
+        stdout = ""
+        stderr = ""
+
+    original = ui.subprocess.run
+    try:
+        ui.subprocess.run = lambda argv, **_k: (
+            seen.update(script=argv[-1]) or _Cancelled()
+        )
+        ui.choose_export(Path.home() / "Downloads")
+    finally:
+        ui.subprocess.run = original
+
+    assert "of type {" in seen["script"], "the panel must filter by type"
+    assert "public.zip-archive" in seen["script"]
+
+
+def test_a_file_that_is_not_an_archive_is_refused_with_an_explanation(
+    monkeypatch, tmp_path
+):
+    """The filter is a convenience; the check is the guarantee."""
+    app = _load_app_main()
+
+    home = tmp_path / "home"
+    (home / "Downloads").mkdir(parents=True)
+    monkeypatch.setattr(app.Path, "home", staticmethod(lambda: home))
+
+    wrong = home / "Downloads" / "holiday.pdf"
+    wrong.write_text("not an archive", encoding="utf-8")
+
+    said: list[str] = []
+    monkeypatch.setattr(app, "dialog", lambda message, **_k: said.append(message) or "OK")
+
+    import sys as _sys
+
+    module = type(_sys)("ui")
+    module.choose_export = lambda _start=None: wrong
+    module.archive_suffixes = lambda *_a, **_k: (".zip",)
+    monkeypatch.setitem(_sys.modules, "ui", module)
+
+    from socialmcp.config import Config
+
+    appdata = tmp_path / "appdata"
+    config = Config(home=appdata, drop_dir=appdata / "drop-archive")
+    config.ensure_dirs()
+
+    assert app.load_flow(config, config.drop_dir / "linkedin") == 1
+    assert any("is not a LinkedIn export" in m for m in said), said
+    assert not config.db_path.exists(), "nothing should have been ingested"
+
+
+def test_the_real_world_export_names_are_accepted():
+    """Real exports have odd names, and the suffix check must not reject them.
+
+    LinkedIn's archive arrives as `Complete_LinkedInDataExport_<date>.zip`, and
+    a browser that unpacks the outer container leaves `....zip.zip` — which is
+    what the maintainer's own export is called. A check written as
+    `name.endswith(".zip")` happens to handle it; one written as
+    `suffixes == name.split(".")[-2:]` would not.
+    """
+    import importlib.util
+
+    macos = Path(__file__).resolve().parent.parent / "packaging" / "macos"
+    spec = importlib.util.spec_from_file_location("ui_names", macos / "ui.py")
+    ui = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ui)
+
+    allowed = ui.archive_suffixes()
+    for name in (
+        "Complete_LinkedInDataExport_11-15-2026.zip",
+        "Complete_LinkedInDataExport_11-15-2026.zip.zip",
+        "Basic_LinkedInDataExport_09-29-2026.zip.zip",
+        "my export (1).zip",
+        "EXPORT.ZIP",
+    ):
+        assert name.lower().endswith(allowed), f"{name} should be accepted"
+
+    for name in ("holiday.pdf", "Connections.csv", "export.zip.part", "notes.txt"):
+        assert not name.lower().endswith(allowed), f"{name} should be refused"
+
+
+def test_the_panel_prompt_names_the_source_it_wants():
+    """A future source must not ask for a "LinkedIn export".
+
+    The prompt is built from the mapping's label, so adding Instagram changes
+    one table entry rather than a string buried in a script.
+    """
+    import importlib.util
+
+    macos = Path(__file__).resolve().parent.parent / "packaging" / "macos"
+    spec = importlib.util.spec_from_file_location("ui_prompt", macos / "ui.py")
+    ui = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ui)
+
+    ui.SOURCE_ARCHIVES["example"] = {
+        "label": "Example Network",
+        "types": ("public.zip-archive",),
+        "suffixes": (".zip",),
+    }
+
+    seen: dict[str, str] = {}
+
+    class _Cancelled:
+        returncode = 1
+        stdout = ""
+        stderr = ""
+
+    original = ui.subprocess.run
+    try:
+        ui.subprocess.run = lambda argv, **_k: (
+            seen.update(script=argv[-1]) or _Cancelled()
+        )
+        ui.choose_export(Path.home(), source="example")
+    finally:
+        ui.subprocess.run = original
+
+    assert "Choose your Example Network export" in seen["script"], seen["script"]
+    assert "LinkedIn" not in seen["script"], "the label must come from the mapping"
+
+
+def test_the_open_panel_refuses_to_select_folders():
+    """Clicking a folder must navigate into it, never answer the question.
+
+    With AppleScript's `choose file`, folders were selectable: a user clicking
+    a subfolder had their click taken as the answer, and the app then refused
+    it with an error. That is the app blaming the user for a control that
+    behaved wrongly. NSOpenPanel states the rule outright.
+    """
+    import importlib.util
+
+    macos = Path(__file__).resolve().parent.parent / "packaging" / "macos"
+    spec = importlib.util.spec_from_file_location("ui_panel", macos / "ui.py")
+    ui = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ui)
+
+    script = ui.PANEL_SCRIPT
+    assert "setCanChooseDirectories(false)" in script, (
+        "folders must open, not be selectable as the answer"
+    )
+    assert "setCanChooseFiles(true)" in script
+    assert "setAllowedFileTypes" in script, "only the source's archives on offer"
+    assert "setAllowsMultipleSelection(false)" in script, "one export at a time"
+    assert "setTreatsFilePackagesAsDirectories(true)" in script, (
+        "a bundle-like folder should be navigable too"
+    )
+    # Same raising behaviour as the alerts, for the same reason.
+    assert "setLevel(8)" in script and "activateIgnoringOtherApps" in script
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="osascript is macOS-only")
+def test_the_open_panel_script_compiles_and_runs():
+    """Execute the real script; a syntax error is otherwise a silent fallback."""
+    import importlib.util
+    import subprocess
+    import tempfile
+
+    macos = Path(__file__).resolve().parent.parent / "packaging" / "macos"
+    spec = importlib.util.spec_from_file_location("ui_panel_run", macos / "ui.py")
+    ui = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ui)
+
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".js", delete=False, encoding="utf-8"
+    ) as handle:
+        handle.write(ui.PANEL_SCRIPT)
+        script = handle.name
+    try:
+        result = subprocess.run(
+            ["osascript", "-l", "JavaScript", script, "__selftest__"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    finally:
+        Path(script).unlink(missing_ok=True)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ok"
+
+
+def test_cancelling_the_panel_is_not_confused_with_it_being_unavailable(monkeypatch):
+    """Two different outcomes: the user said no, or the mechanism is missing.
+
+    Only the second should fall through to another implementation; treating a
+    cancel as a failure would reopen a second panel the user just dismissed.
+    """
+    import importlib.util
+
+    macos = Path(__file__).resolve().parent.parent / "packaging" / "macos"
+    spec = importlib.util.spec_from_file_location("ui_cancel", macos / "ui.py")
+    ui = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ui)
+
+    class _Cancelled:
+        returncode = 0
+        stdout = "__cancelled__"
+        stderr = ""
+
+    monkeypatch.setattr(ui.subprocess, "run", lambda *_a, **_k: _Cancelled())
+    assert ui.choose_export(Path.home()) is None
+
+    class _Chosen:
+        returncode = 0
+        stdout = "/Users/someone/Downloads/Export.zip"
+        stderr = ""
+
+    monkeypatch.setattr(ui.subprocess, "run", lambda *_a, **_k: _Chosen())
+    assert ui.choose_export(Path.home()) == Path("/Users/someone/Downloads/Export.zip")
+
+
+def test_the_app_ships_its_own_licence_and_notice():
+    """The terms someone relies on belong inside what they downloaded.
+
+    The bundle carried seventeen licence files belonging to dependencies and
+    none for this software. A click-through "I agree" gate was considered and
+    rejected: Apache-2.0 already disclaims warranty, and a gate before first
+    use is friction for the audience this app exists for. Shipping the text,
+    and saying the short version once, is the honest version of the same
+    thing.
+    """
+    macos = Path(__file__).resolve().parent.parent / "packaging" / "macos"
+    spec = (macos / "socialmcp.spec").read_text(encoding="utf-8")
+
+    datas = spec.split("datas = [", 1)[1].split("]", 1)[0]
+    assert 'REPO / "LICENSE"' in datas, "the licence must be inside the bundle"
+    assert 'REPO / "NOTICE"' in datas, "the notice must be inside the bundle"
+
+    build = (macos / "build.sh").read_text(encoding="utf-8")
+    assert "LICENSE.txt" in build, "the licence should sit beside the app on the dmg"
+
+    report = (macos / "app_main.py").read_text(encoding="utf-8")
+    assert "provided as-is with no" in report, (
+        "say it once in the first dialog rather than behind an agreement gate"
+    )
+    assert "collects no analytics" in report
+    assert "travel to whoever runs it" in report, (
+        "the dialog must not imply contacts never reach a cloud model: the "
+        "assistant sends whatever it read to answer you"
+    )
+
+
+def test_the_licence_command_prints_the_terms():
+    """`socialmcp license` must work, and say the things that matter."""
+    from socialmcp.cli import _license_text
+
+    text = _license_text()
+    for phrase in ("Apache License", "AS IS", "WITHOUT WARRANTIES"):
+        assert phrase in text, f"missing {phrase!r}"
+    for phrase in ("no analytics", "never logs in", "Deleting the database file"):
+        assert phrase in text, f"the privacy terms should state: {phrase!r}"
+
+
+def test_the_notice_file_does_not_overpromise():
+    """The notice must not claim anything the software does not do."""
+    notice = (
+        Path(__file__).resolve().parent.parent / "NOTICE"
+    ).read_text(encoding="utf-8")
+
+    # The one outbound request it can make has to be disclosed, not hidden
+    # behind "nothing leaves your computer".
+    assert "127.0.0.1:11434" in notice, (
+        "the embedding provider is a real outbound request and must be named"
+    )
+    assert "can be switched off" in notice
+
+
+def test_the_terms_are_shown_before_anything_is_detected_or_written():
+    """Terms after the fact are decoration; they come first or not at all."""
+    source = (
+        Path(__file__).resolve().parent.parent / "packaging" / "macos" / "app_main.py"
+    ).read_text(encoding="utf-8")
+    flow = " ".join(source.split("def setup_flow(")[1].split("\ndef ")[0].split())
+
+    asked = flow.find("terms_flow()")
+    detected = flow.find("run_with_progress(")
+    wrote = flow.find("setup_all(")
+    assert asked != -1, "setup_flow never shows the terms"
+    assert asked < detected < wrote, (
+        "the terms must precede detection, which must precede any write"
+    )
+
+
+def test_declining_the_terms_writes_nothing(monkeypatch, tmp_path):
+    """Quit means quit: no config touched, no database, no marker."""
+    app = _load_app_main()
+    monkeypatch.setattr(app, "APP_SUPPORT", tmp_path / "appdata")
+    # Stub the rich sheet too, or the test opens a real window.
+    monkeypatch.setattr(app, "_terms_sheet", lambda **_k: "Quit")
+    monkeypatch.setattr(app, "ask", lambda *_a, **_k: "Quit")
+
+    assert app.terms_flow() is False
+    assert not (tmp_path / "appdata" / "accepted-terms.json").exists(), (
+        "declining must not be recorded as acceptance"
+    )
+
+
+def test_consent_is_recorded_locally_and_asked_only_once(monkeypatch, tmp_path):
+    """Saved on this Mac, in the app's own folder, and never sent anywhere."""
+    app = _load_app_main()
+    appdata = tmp_path / "appdata"
+    monkeypatch.setattr(app, "APP_SUPPORT", appdata)
+
+    asked: list[str] = []
+
+    def once(message, **_kwargs):
+        asked.append(message)
+        return "Agree and continue"
+
+    monkeypatch.setattr(app, "_terms_sheet", lambda **_k: None)
+    monkeypatch.setattr(app, "ask", once)
+
+    assert app.terms_flow() is True
+    marker = appdata / "accepted-terms.json"
+    assert marker.exists(), "acceptance should be remembered"
+
+    import json
+
+    record = json.loads(marker.read_text(encoding="utf-8"))
+    assert record["fingerprint"] == app.terms_fingerprint()
+    # Acceptances are kept as a list, so which wording was agreed and when
+    # stays answerable after the terms change.
+    assert record["accepted"][-1]["fingerprint"] == app.terms_fingerprint()
+    assert "accepted_at" in record["accepted"][-1]
+    # Nothing resembling an identifier, because this is never transmitted.
+    assert set(record) == {"fingerprint", "accepted"}, record
+    assert set(record["accepted"][-1]) == {"fingerprint", "accepted_at"}
+
+    # Second launch: no question.
+    assert app.terms_flow() is True
+    assert len(asked) == 1, "the terms should be shown once, not every launch"
+
+
+def test_changed_terms_are_shown_again(monkeypatch, tmp_path):
+    """New wording is a new agreement, not one already given."""
+    app = _load_app_main()
+    appdata = tmp_path / "appdata"
+    monkeypatch.setattr(app, "APP_SUPPORT", appdata)
+    monkeypatch.setattr(app, "_terms_sheet", lambda **_k: "Agree and continue")
+    monkeypatch.setattr(app, "ask", lambda *_a, **_k: "Agree and continue")
+
+    assert app.terms_flow() is True
+    assert app.terms_accepted() is True
+
+    monkeypatch.setattr(app, "TERMS", app.TERMS + "\n\nAnd one new condition.")
+    assert app.terms_accepted() is False, (
+        "a fingerprint of the wording means changed terms are asked again"
+    )
+
+
+def test_the_terms_say_the_things_that_matter():
+    """The disclaimers have to be present in the words the user reads."""
+    app = _load_app_main()
+    terms = app.TERMS
+
+    for phrase in (
+        "Apache License, Version 2.0",
+        'PROVIDED "AS IS"',
+        "WITHOUT WARRANTY",
+        "Limitation of liability",
+        "no analytics or telemetry",
+        "does not access any social network",
+        "Deleting the database removes all data",
+    ):
+        assert phrase in terms, f"the terms should state: {phrase!r}"
+    # The single outbound request must be disclosed rather than glossed over.
+    assert "embedding service you configure" in terms
+    assert "may be disabled entirely" in terms
+    # And the bigger one: results reach whoever operates the assistant. Saying
+    # only that nothing is uploaded reads as "my contacts never reach a cloud
+    # model", which is not true of any cloud assistant.
+    assert "disclosed to its operator" in terms, "the terms must not overclaim"
+    assert "outside the control of this software" in terms
+    # Writing into another application's settings is a consequential act and
+    # has to be stated, along with the fact that it waits for a choice.
+    assert "Configuration of other applications" in terms
+    assert "before you make that selection" in terms
+    # Acceptance is local. The terms say so, because the file exists.
+    assert "not transmitted" in terms
+
+
+def test_dialog_prose_is_not_hard_wrapped():
+    """Let the system wrap. Our own line breaks fight it.
+
+    NSAlert wraps text to the dialog width, so a string already broken at 72
+    characters gets broken twice: every one of our breaks becomes a premature
+    line ending, leaving ragged gaps mid-sentence. Lines that are deliberately
+    short — a path, a quoted question, a bullet — are fine; prose is not.
+    """
+    app = _load_app_main()
+
+    # Each clause of the terms is one paragraph, however long.
+    for line in app.TERMS.splitlines():
+        if not line.strip():
+            continue
+        assert len(line) > 90 or line.rstrip().endswith((":", ".")), (
+            f"terms line looks hand-wrapped: {line!r}"
+        )
+
+    # The summary's prose paragraphs likewise.
+    message, _buttons = app.build_setup_report([], embeddings=True)
+    suspects = [
+        line
+        for line in message.splitlines()
+        # A wrapped prose line is long-ish, has no structure, and does not end
+        # a sentence — the signature of a break mid-thought.
+        if 55 < len(line) < 75
+        and not line.rstrip().endswith((".", ":", "?", '"'))
+        and not line.startswith((" ", "/", "-", "1.", "2.", "3."))
+    ]
+    assert not suspects, f"these look hand-wrapped: {suspects}"
+
+
+def test_the_terms_heading_is_not_repeated_in_the_body():
+    """The dialog title is the heading; the body must not say it again."""
+    source = (
+        Path(__file__).resolve().parent.parent / "packaging" / "macos" / "app_main.py"
+    ).read_text(encoding="utf-8")
+    app = _load_app_main()
+
+    assert not app.TERMS.lstrip().lower().startswith("socialmcp"), (
+        "the terms body repeats the window title"
+    )
+    assert 'title="SocialMCP — Terms of Use"' in source, (
+        "the title should carry the heading instead"
+    )
+
+
+def test_each_clause_heading_is_bold_and_ends_with_a_colon():
+    """Headings carry the structure, so they must be visually distinct.
+
+    Bold is not reachable through plain dialog text: NSAlert's informative
+    text is a plain string, and JavaScript for Automation does not expose the
+    attributed-string initialisers (tried: initWithString:,
+    initWithString:attributes:, and the NSDictionary constructors are all
+    absent from the bridge). NSTextView's readRTFDFromFile: is exposed, so the
+    clauses are generated as RTF instead.
+    """
+    app = _load_app_main()
+    rtf = app.terms_rtf()
+
+    assert len(app.TERMS_CLAUSES) >= 8, "clauses were lost"
+    for number, (heading, _body) in enumerate(app.TERMS_CLAUSES, 1):
+        marker = rf"\b {number}. {heading}:\b0 "
+        assert marker in rtf, f"clause {number} is not a bold heading: {marker!r}"
+
+    assert rtf.startswith(r"{\rtf1"), "must be a valid RTF document"
+    assert rtf.rstrip().endswith("}"), "RTF document is unterminated"
+
+
+def test_the_rtf_escapes_characters_that_would_corrupt_it():
+    """Braces and backslashes are RTF syntax; non-ASCII needs spelling out."""
+    app = _load_app_main()
+
+    assert app._rtf_escape("a{b}c") == r"a\{b\}c"
+    assert app._rtf_escape("back\\slash") == r"back\\slash"
+    # An em dash or curly quote would otherwise render as mojibake.
+    assert app._rtf_escape("an — dash") == r"an \u8212? dash", (
+        "non-ASCII must become a numeric RTF escape with a fallback character"
+    )
+
+
+def test_the_terms_sheet_shrinks_the_icon_and_scrolls():
+    """A large icon pushes the terms off screen; long terms need scrolling."""
+    app = _load_app_main()
+    script = app.TERMS_SCRIPT
+
+    assert "NSMakeSize(40, 40)" in script, "the default icon is too tall"
+    assert "setHasVerticalScroller(true)" in script, "long terms must scroll"
+    assert "readRTFDFromFile" in script, "bold headings come from RTF"
+    assert "setLevel(8)" in script and "activateIgnoringOtherApps" in script
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="osascript is macOS-only")
+def test_the_terms_script_and_its_rtf_both_load():
+    """Generate the real RTF, hand it to the real script, without drawing."""
+    import subprocess
+    import tempfile
+
+    app = _load_app_main()
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".js", delete=False, encoding="utf-8"
+    ) as handle:
+        handle.write(app.TERMS_SCRIPT)
+        script = handle.name
+    try:
+        result = subprocess.run(
+            ["osascript", "-l", "JavaScript", script, "__selftest__"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    finally:
+        Path(script).unlink(missing_ok=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ok"
+
+    # And the RTF itself parses: TextEdit's converter is what the view uses.
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".rtf", delete=False, encoding="ascii", errors="backslashreplace"
+    ) as handle:
+        handle.write(app.terms_rtf())
+        rtf = handle.name
+    try:
+        probe = subprocess.run(
+            ["textutil", "-convert", "txt", "-stdout", rtf],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    finally:
+        Path(rtf).unlink(missing_ok=True)
+    assert probe.returncode == 0, probe.stderr
+    for heading, _body in app.TERMS_CLAUSES:
+        assert heading in probe.stdout, f"{heading!r} missing once rendered"
+
+
+def test_the_terms_scrollbar_is_always_visible():
+    """A hidden scrollbar hides the fact that there are more clauses.
+
+    macOS overlay scrollers appear only once someone scrolls, so a reader
+    sees the first clauses and no indication that five more follow. For terms
+    specifically, that is the difference between agreeing to what you read
+    and agreeing to what you happened to be shown.
+    """
+    app = _load_app_main()
+    script = app.TERMS_SCRIPT
+
+    assert "setScrollerStyle(0)" in script, "legacy scrollers are always drawn"
+    assert "setAutohidesScrollers(false)" in script, "it must not fade away"
+    assert "setHasVerticalScroller(true)" in script
+
+
+def test_a_user_is_told_when_the_terms_have_changed(monkeypatch, tmp_path):
+    """Being asked again without explanation looks like the app forgot."""
+    app = _load_app_main()
+    appdata = tmp_path / "appdata"
+    monkeypatch.setattr(app, "APP_SUPPORT", appdata)
+
+    # Nothing accepted yet: a first run, not an update.
+    assert app.terms_changed_since_last_accepted() is False
+
+    monkeypatch.setattr(app, "_terms_sheet", lambda **_k: "Agree and continue")
+    assert app.terms_flow() is True
+    assert app.terms_changed_since_last_accepted() is False
+
+    # Reword the terms: now it is an update.
+    monkeypatch.setattr(app, "TERMS", app.TERMS + "\n\n9. New clause: something.")
+    assert app.terms_accepted() is False
+    assert app.terms_changed_since_last_accepted() is True
+
+    assert "These terms have changed" in app.terms_rtf(updated=True)
+    assert "These terms have changed" not in app.terms_rtf()
+
+
+def test_every_acceptance_is_kept_not_overwritten(monkeypatch, tmp_path):
+    """Which wording was accepted, and when, stays answerable afterwards."""
+    app = _load_app_main()
+    appdata = tmp_path / "appdata"
+    monkeypatch.setattr(app, "APP_SUPPORT", appdata)
+    monkeypatch.setattr(app, "_terms_sheet", lambda **_k: "Agree and continue")
+
+    assert app.terms_flow() is True
+    first = app.terms_fingerprint()
+
+    monkeypatch.setattr(app, "TERMS", app.TERMS + "\n\n9. New clause: something.")
+    assert app.terms_flow() is True
+
+    import json
+
+    record = json.loads((appdata / "accepted-terms.json").read_text(encoding="utf-8"))
+    fingerprints = [entry["fingerprint"] for entry in record["accepted"]]
+    assert first in fingerprints, "the earlier acceptance must survive"
+    assert app.terms_fingerprint() in fingerprints
+    assert len(record["accepted"]) == 2
+    # Still local, still free of identifiers.
+    for entry in record["accepted"]:
+        assert set(entry) == {"fingerprint", "accepted_at"}, entry

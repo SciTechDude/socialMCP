@@ -172,6 +172,9 @@ STAGE="$(mktemp -d)"
 cp -R "$APP" "$STAGE/"
 # A visible alias to /Applications is the whole install instruction.
 ln -s /Applications "$STAGE/Applications"
+# The terms sit beside the app, readable before it is even copied across.
+cp "$REPO/LICENSE" "$STAGE/LICENSE.txt"
+cp "$REPO/NOTICE" "$STAGE/README-AND-PRIVACY.txt"
 hdiutil create -volname "SocialMCP $VERSION" -srcfolder "$STAGE" \
     -ov -format UDZO -quiet "$DMG"
 rm -rf "$STAGE"

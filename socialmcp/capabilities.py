@@ -230,7 +230,13 @@ LIMITS: tuple[str, ...] = (
     "cannot be attributed to whoever sent the invitation.",
     "Knows nothing about events by name on its own. Your assistant supplies the "
     "dates; SocialMCP matches them against when you met people.",
-    "Everything is stored in one file on this computer. Nothing is uploaded, and "
+    "Cannot control what your AI assistant does with an answer. SocialMCP "
+    "uploads nothing, but the results it hands back become part of your "
+    "conversation — so whoever runs that assistant (Anthropic, OpenAI, Google) "
+    "sees whatever it read to answer you, exactly as they see the rest of the "
+    "chat. A model running on your own machine is the only way to avoid that.",
+    "Everything is stored in one file on this computer. SocialMCP uploads "
+    "nothing and "
     "deleting that file deletes all of it.",
 )
 
@@ -264,7 +270,8 @@ def as_markdown() -> str:
         "# What SocialMCP can do",
         "",
         "A private CRM built from your own social data export. Your AI assistant",
-        "queries it on your behalf, and the data never leaves your computer.",
+        "queries it on your behalf. The data stays in a file on this computer; "
+        "SocialMCP never uploads it.",
         "",
         "Ask in your own words — the shapes below are just the kinds of question it",
         "can answer. Replace anything in angle brackets with your own details.",

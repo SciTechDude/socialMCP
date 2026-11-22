@@ -11,7 +11,10 @@ When you're done, you'll be able to ask your AI assistant things like:
 >
 > *Remind me how I met Dana.*
 
-Everything stays on your own computer. Nothing is uploaded anywhere.
+Your export and the database stay on your own computer — SocialMCP uploads
+nothing. Bear in mind that answers your assistant gives you travel to whoever
+runs it, like the rest of your conversation; that part is outside SocialMCP's
+control.
 
 ---
 
@@ -37,6 +40,12 @@ up to 24 hours. Carry on with Step 2 while you wait.
 ---
 
 ## Step 2 — Install SocialMCP
+
+> **Tested with Claude.** The Mac app has been through this whole flow with
+> Claude Code and Claude Desktop. It also detects Cursor, Windsurf, VS Code,
+> Zed, Gemini CLI and Cline and sets them up the same way, but those have not
+> been tested end-to-end yet. If you use one, please
+> [say whether it worked](https://github.com/SciTechDude/socialMCP/discussions).
 
 **On a Mac, this is one download.**
 
@@ -75,7 +84,15 @@ Applications installs it but does not run it. Nothing sets itself up until you
 open the app.
 
 There is no Python to set up and no terminal to open — everything it needs is
-inside the app, and it asks for no access to your files. You hand it one file.
+inside the app.
+
+**About the folder-access prompts.** When you pick your export, macOS may ask
+whether SocialMCP can open **Downloads**, **Desktop** or **Documents**. That is
+macOS asking on behalf of the file-chooser window, not SocialMCP reading your
+folders. **Allow only Downloads** if that is where your export is — or refuse
+all three and drag the `.zip` into the app's folder instead, which needs no
+permission at all. SocialMCP reads only the file you give it, and uploads
+nothing, whichever you choose.
 
 <details>
 <summary><b>Windows</b></summary>
@@ -210,11 +227,17 @@ Apple Silicon build on an Intel Mac, or the reverse. Nothing is broken and
 nothing is actually damaged; macOS just reports it that way. Delete the file
 and use the command-line install above, which works on either chip.
 
-The app itself is **signed and notarized with Apple**, so it opens normally on
-any Mac — no security warning to dismiss, no Privacy & Security detour, and
-nothing to bypass. If you are ever told to strip a quarantine flag or click
-through a Gatekeeper warning to run SocialMCP, something is wrong: either the
-download is incomplete or it did not come from
+### "SocialMCP is an app downloaded from the Internet. Are you sure?"
+
+**That one is normal — click Open.** macOS asks it once for anything you
+download from the web, however it was signed. The message should also say
+*"Apple checked it for malicious software and none was detected"*, which is the
+notarization doing its job. You will not be asked again.
+
+What should *never* happen: macOS saying the developer **"cannot be verified"**,
+offering only **Move to Trash**, or any instruction to visit Privacy & Security
+or strip a quarantine flag. Those mean the app is not properly signed — so
+either the download is incomplete or it did not come from
 [the releases page](https://github.com/SciTechDude/socialMCP/releases).
 
 You can verify what you downloaded before opening it. This prints the signing

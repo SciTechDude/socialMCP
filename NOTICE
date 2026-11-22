@@ -1,0 +1,44 @@
+SocialMCP
+Copyright 2026 SocialMCP contributors
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. A copy of the License ships
+alongside this notice, and is available at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied.
+
+----------------------------------------------------------------------------
+
+What this software does with your data
+
+SocialMCP reads the data export you give it and stores the result in a single
+SQLite file on the computer it runs on. It collects no analytics, sends no
+telemetry, and has no account, server or sign-in of any kind. It never logs in
+to any social network, never uses a password or session cookie, and never reads
+any website.
+
+The only outbound network request it can make is to an embedding provider you
+configure yourself, which defaults to a model running on your own machine
+(127.0.0.1:11434) and can be switched off entirely.
+
+What it cannot control is what your AI assistant does with an answer. SocialMCP
+uploads nothing, but the contacts it hands back become part of your
+conversation, so whoever runs that assistant — Anthropic, OpenAI, Google —
+sees whatever it read to answer you, exactly as they see the rest of the chat.
+That is true of any cloud assistant and is outside this software's control. A
+model running on your own machine is the only way to avoid it.
+
+Deleting the database file deletes everything it holds.
+
+----------------------------------------------------------------------------
+
+Third-party software
+
+This application bundles a Python interpreter and the libraries SocialMCP
+depends on. Each carries its own licence, and those licences are included in
+the application bundle under Contents/Resources, in the `*.dist-info`
+directories belonging to each package.

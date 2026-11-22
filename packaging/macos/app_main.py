@@ -26,8 +26,9 @@ from typing import Any
 # A bundled app inherits almost no environment: launched from Finder there is
 # no shell, no PATH to speak of, and no working directory the user chose. Pin
 # what we need before importing anything that reads config.
-ACTION_IMPORT = "Choose my export…"
-ACTION_FOLDER = "Open the folder"
+MAX_DIALOG_BUTTONS = 3  # AppleScript's `display dialog` hard limit
+
+ACTION_LOAD = "Choose my export…"
 ACTION_DONE = "Done"
 
 APP_SUPPORT = Path.home() / "Library" / "Application Support" / "SocialMCP"
@@ -77,9 +78,26 @@ def running_from_removable_location() -> Path | None:
 
 
 def dialog(message: str, *, title: str = "SocialMCP", buttons: tuple[str, ...] = ("OK",)) -> str:
-    """A native dialog via AppleScript, so no UI toolkit is bundled."""
+    """A native dialog via AppleScript, so no UI toolkit is bundled.
+
+    The leading `activate` matters more than it looks. A dialog shown by
+    osascript belongs to the osascript process, which is not frontmost when
+    this app is launched from Finder — so the window opened *behind* whatever
+    the user was looking at. Someone who knows the app is running finds it in
+    the Dock and clicks; everyone else concludes that double-clicking did
+    nothing. `activate` brings the dialog to the front, and needs no
+    permission because the process is only activating itself.
+    """
+    answer = _alert_via_bridge(message, title=title, buttons=buttons)
+    if answer is not None:
+        return answer
+
+    # Fallback: AppleScript. Its dialog can open behind other windows, which
+    # is exactly the problem the bridge solves, but a dialog the user has to
+    # hunt for in the Dock still beats no dialog at all.
     button_list = ", ".join(f'"{b}"' for b in buttons)
     script = (
+        "activate\n"
         f'display dialog {_quote(message)} with title "{title}" '
         f"buttons {{{button_list}}} default button \"{buttons[-1]}\""
     )
@@ -98,6 +116,601 @@ def dialog(message: str, *, title: str = "SocialMCP", buttons: tuple[str, ...] =
 
 def _quote(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def trace(event: str) -> None:
+    """Record a step in the app's log. See applog.py for why this exists."""
+    import applog  # type: ignore[import-not-found]
+
+    applog.write(event)
+
+
+ALERT_SCRIPT = r"""
+ObjC.import('Cocoa');
+// Which button a response code means. NSAlert returns 1000 for the first
+// button added, and buttons are added in reverse, so this undoes both.
+function pick(buttons, response) {
+  const index = buttons.length - 1 - (response - 1000);
+  return buttons[index] !== undefined ? buttons[index] : buttons[buttons.length - 1];
+}
+
+function run(argv) {
+  if (argv.length === 1 && argv[0] === '__selftest__') return 'ok';
+  // Exercises the mapping above with no window, so the arithmetic is tested
+  // rather than assumed: getting it wrong silently returns the wrong button.
+  if (argv.length > 1 && argv[0] === '__maptest__') {
+    const buttons = argv.slice(1);
+    const out = [];
+    for (let i = 0; i < buttons.length; i++) out.push(pick(buttons, 1000 + i));
+    return out.join('|');
+  }
+  const title = argv[0];
+  const message = argv[1];
+  const buttons = argv.slice(2);
+
+  // Without this, the alert belongs to a background tool and opens behind
+  // whatever the user was looking at. AppleScript's bare `activate` cannot
+  // fix that — osascript is not allowed to become frontmost — but setting a
+  // regular activation policy through the bridge makes it a real foreground
+  // app for the life of the dialog.
+  const app = $.NSApplication.sharedApplication;
+  app.setActivationPolicy(0);
+  app.activateIgnoringOtherApps(true);
+
+  const alert = $.NSAlert.alloc.init;
+  alert.setMessageText(title);
+  alert.setInformativeText(message);
+
+  // NSAlert has no width API and sizes itself narrowly, which turns long
+  // paragraphs into a tall ribbon of text. An accessory view of fixed width
+  // and no height is the usual way to widen it: the text then wraps to a
+  // comfortable measure. Text is passed unwrapped for the same reason —
+  // hard line breaks fight the system's wrapping and leave ragged gaps
+  // mid-sentence.
+  const WIDTH = message.length > 600 ? 520 : 400;
+  alert.setAccessoryView(
+    $.NSView.alloc.initWithFrame($.NSMakeRect(0, 0, WIDTH, 1))
+  );
+  // NSAlert draws the first button added as the rightmost default, which is
+  // the opposite of the order callers pass, so they go on in reverse.
+  for (let i = buttons.length - 1; i >= 0; i--) alert.addButtonWithTitle(buttons[i]);
+
+  // Activation alone loses to whatever is already frontmost: a terminal in
+  // the foreground kept this behind it. So the window is also lifted above
+  // normal windows (NSModalPanelWindowLevel = 8) and made key explicitly,
+  // and activation is requested again immediately before the modal runs —
+  // by which point the window exists and can actually be ordered front.
+  const win = alert.window;
+  win.setLevel(8);
+  win.setHidesOnDeactivate(false);
+  app.activateIgnoringOtherApps(true);
+  win.makeKeyAndOrderFront($());
+
+  return pick(buttons, Number(alert.runModal));
+}
+"""
+
+
+CHECKBOX_SCRIPT = r"""
+ObjC.import('Cocoa');
+function run(argv) {
+  const names = argv;
+  // Lets a test compile and execute this script without drawing anything:
+  // a syntax error here is otherwise only discoverable by a user, because
+  // the caller quietly falls back to asking one app at a time.
+  if (names.length === 1 && names[0] === '__selftest__') return 'ok';
+  const app = $.NSApplication.sharedApplication;
+  app.setActivationPolicy(0);               // Regular, so the alert can appear
+  app.activateIgnoringOtherApps(true);
+
+  const alert = $.NSAlert.alloc.init;
+  alert.setMessageText('Connect SocialMCP to which apps?');
+  alert.setInformativeText(
+    'Each app ticked below gets a socialmcp entry added to its settings, and '
+    + 'the file is backed up first. Nothing else in it is changed. '
+    + 'Untick anything you would rather leave alone.\n\n'
+    // Said here, not only in the summary afterwards: this is the first moment
+    // anything is written, so the terms belong before the decision rather
+    // than after it. No agreement gate — Apache-2.0 disclaims warranty
+    // already, and `SocialMCP license` prints the full text.
+    + 'SocialMCP is free and open source under Apache-2.0, provided as-is '
+    + 'with no warranty. SocialMCP uploads nothing and collects no analytics, '
+    + 'though answers your assistant gives you travel to whoever runs it.'
+  );
+  alert.addButtonWithTitle('Connect');
+  alert.addButtonWithTitle('Cancel');
+
+  const rowH = 26, width = 360;
+  const view = $.NSView.alloc.initWithFrame($.NSMakeRect(0, 0, width, rowH * names.length));
+  const boxes = [];
+  for (let i = 0; i < names.length; i++) {
+    const y = rowH * (names.length - 1 - i);
+    const box = $.NSButton.alloc.initWithFrame($.NSMakeRect(0, y, width, rowH));
+    box.setButtonType(3);                   // NSButtonTypeSwitch, i.e. a checkbox
+    box.setTitle(names[i]);
+    box.setState(1);                        // ticked: connecting all is the common case
+    view.addSubview(box);
+    boxes.push(box);
+  }
+  alert.setAccessoryView(view);
+
+  // Activation alone loses to whatever is already frontmost: a terminal in
+  // the foreground kept this behind it. So the window is also lifted above
+  // normal windows (NSModalPanelWindowLevel = 8) and made key explicitly,
+  // and activation is requested again immediately before the modal runs —
+  // by which point the window exists and can actually be ordered front.
+  const win = alert.window;
+  win.setLevel(8);
+  win.setHidesOnDeactivate(false);
+  app.activateIgnoringOtherApps(true);
+  win.makeKeyAndOrderFront($());
+
+  if (Number(alert.runModal) !== 1000) return '__cancelled__';   // 1000 = first button
+  const picked = [];
+  for (let i = 0; i < boxes.length; i++) {
+    if (Number(boxes[i].state) === 1) picked.push(names[i]);
+  }
+  return picked.length ? picked.join('\n') : '__none__';
+}
+"""
+
+
+def choose_clients(names: list[str]) -> list[str] | None:
+    """Ask which AI apps to connect, with real checkboxes.
+
+    Shown only when more than one app is found: writing into another
+    application's settings is not something to do unasked, and which of
+    someone's editors gets an entry is preference, not detection.
+
+    Drawn as an `NSAlert` with checkbox subviews, driven through
+    `osascript -l JavaScript` and the Objective-C bridge. That is the native
+    control, needs no bundled toolkit, and asks for no permissions.
+
+    Two earlier attempts are worth remembering. AppleScript's
+    `choose from list` looks like the obvious fit but draws highlightable rows
+    rather than checkboxes, so selecting a subset needs Command-click and
+    behaves as all-or-nothing for anyone who does not know that. Replacing it
+    with one question per app worked but asked three times for three apps.
+    This is what a Mac application would actually show.
+
+    Falls back to plain questions if the script cannot run, so an unusual
+    environment degrades to something usable rather than nothing.
+    """
+    import tempfile
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".js", delete=False, encoding="utf-8"
+        ) as handle:
+            handle.write(CHECKBOX_SCRIPT)
+            script_path = handle.name
+        try:
+            result = subprocess.run(
+                ["osascript", "-l", "JavaScript", script_path, *names],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=900,
+            )
+        finally:
+            Path(script_path).unlink(missing_ok=True)
+    except (OSError, subprocess.SubprocessError):
+        trace("consent: checkbox dialog unavailable, asking one at a time")
+        return _choose_clients_one_at_a_time(names)
+
+    if result.returncode != 0:
+        trace(f"consent: checkbox dialog failed ({result.stderr.strip()[:120]})")
+        return _choose_clients_one_at_a_time(names)
+
+    answer = (result.stdout or "").strip()
+    if answer == "__cancelled__":
+        return None
+    if answer == "__none__":
+        return []
+    picked = [line.strip() for line in answer.splitlines() if line.strip()]
+    return [name for name in names if name in picked]
+
+
+def _choose_clients_one_at_a_time(names: list[str]) -> list[str] | None:
+    """Fallback: one plain question per app, needing no scripting bridge."""
+    answer = dialog(
+        f"Found {len(names)} AI apps that can use SocialMCP:\n\n"
+        f"  {', '.join(names)}\n\n"
+        "Connecting adds a socialmcp entry to each one's settings, and the\n"
+        "file is backed up first. Nothing else in them is changed.\n\n"
+        "Connect all of them, or decide one at a time?",
+        buttons=("Cancel", "Decide each", "Connect all"),
+    )
+    if answer == "Cancel":
+        return None
+    if answer == "Connect all":
+        return list(names)
+
+    picked: list[str] = []
+    for name in names:
+        if dialog(
+            f"Connect SocialMCP to {name}?\n\n"
+            f"({len(picked)} of {len(names)} connected so far.)",
+            buttons=("Skip", "Connect"),
+        ) == "Connect":
+            picked.append(name)
+    return picked
+
+
+def _run_jxa(script: str, args: list[str], *, timeout: int = 900):
+    """Run a JavaScript-for-Automation script with arguments. None on failure."""
+    import tempfile
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".js", delete=False, encoding="utf-8"
+        ) as handle:
+            handle.write(script)
+            path = handle.name
+        try:
+            return subprocess.run(
+                ["osascript", "-l", "JavaScript", path, *args],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+        finally:
+            Path(path).unlink(missing_ok=True)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _alert_via_bridge(
+    message: str, *, title: str, buttons: tuple[str, ...]
+) -> str | None:
+    """A native NSAlert that raises itself. None if it could not be shown."""
+    result = _run_jxa(ALERT_SCRIPT, [title, message, *buttons])
+    if result is None or result.returncode != 0:
+        if result is not None:
+            trace(f"alert: bridge failed ({result.stderr.strip()[:120]})")
+        return None
+    answer = (result.stdout or "").strip()
+    return answer if answer in buttons else None
+
+
+TERMS_CLAUSES: tuple[tuple[str, str], ...] = (
+    (
+        "Licence",
+        "SocialMCP is free and open-source software licensed under the Apache"
+        " License, Version 2.0. The full text accompanies this software as"
+        " LICENSE.txt and may be displayed at any time by running"
+        " `SocialMCP license`.",
+    ),
+    (
+        "No warranty",
+        'THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTY OR CONDITION OF'
+        " ANY KIND, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY"
+        " WARRANTY OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR"
+        " NON-INFRINGEMENT.",
+    ),
+    (
+        "Limitation of liability",
+        "To the maximum extent permitted by applicable law, no author or"
+        " contributor shall be liable for any claim, damages, or other"
+        " liability arising from, out of, or in connection with the software or"
+        " its use.",
+    ),
+    (
+        "Scope of processing",
+        "The software processes only the data export you select, and stores the"
+        " resulting database locally on this computer. It operates without any"
+        " account, sign-in, or server; transmits no analytics or telemetry; and"
+        " does not access any social network, credential, or browser cookie."
+        " Deleting the database removes all data it holds.",
+    ),
+    (
+        "Third-party AI services",
+        "Results the software returns to your AI assistant form part of your"
+        " conversation with that assistant, and are accordingly disclosed to"
+        " its operator (for example Anthropic, OpenAI, or Google) under that"
+        " operator's own terms and privacy policy. Such disclosure is outside"
+        " the control of this software and its authors.",
+    ),
+    (
+        "Outbound requests",
+        "The only network request the software initiates is to an embedding"
+        " service you configure. This defaults to a model running on this"
+        " computer, and may be disabled entirely.",
+    ),
+    (
+        "Configuration of other applications",
+        'Where you so direct, the software adds an entry named "socialmcp" to'
+        " the settings of the AI applications you select, having first created"
+        " a backup of each file it modifies. No such file is modified before"
+        " you make that selection.",
+    ),
+    (
+        "Acceptance",
+        'Selecting "Agree and continue" records your acceptance of these terms'
+        " on this computer. The record is not transmitted.",
+    ),
+)
+
+# The plain-text rendering, used for `SocialMCP license`, for the fallback
+# dialog, and for the acceptance fingerprint.
+TERMS = "\n\n".join(
+    f"{number}. {heading}: {body}"
+    for number, (heading, body) in enumerate(TERMS_CLAUSES, 1)
+)
+
+
+# A rich-text sheet for the terms, so each clause heading can be bold.
+#
+# Bold is not reachable any other way here: NSAlert's informative text is a
+# plain string, and JavaScript for Automation does not expose the attributed
+# string initialisers at all (initWithString:, initWithString:attributes: and
+# the NSDictionary constructors are all absent from the bridge — tried). What
+# *is* exposed is NSTextView's readRTFDFromFile:, so the clauses are written
+# out as RTF and loaded into a scrolling text view used as the alert's
+# accessory. The scroll view also stops long terms stretching the dialog off
+# the screen.
+TERMS_SCRIPT = r"""
+ObjC.import('Cocoa');
+function run(argv) {
+  if (argv.length === 1 && argv[0] === '__selftest__') return 'ok';
+  const title = argv[0];
+  const rtfPath = argv[1];
+  const agree = argv[2];
+  const quit = argv[3];
+
+  const app = $.NSApplication.sharedApplication;
+  app.setActivationPolicy(0);
+  app.activateIgnoringOtherApps(true);
+
+  const alert = $.NSAlert.alloc.init;
+  alert.setMessageText(title);
+  alert.addButtonWithTitle(agree);
+  alert.addButtonWithTitle(quit);
+
+  // The default icon is drawn large above the heading, pushing the whole
+  // sheet down for no information. Smaller keeps the terms in view.
+  const icon = $.NSImage.imageNamed('NSApplicationIcon');
+  if (icon && !icon.isNil()) {
+    icon.setSize($.NSMakeSize(40, 40));
+    alert.setIcon(icon);
+  }
+
+  const W = 560, H = 320;
+  const scroll = $.NSScrollView.alloc.initWithFrame($.NSMakeRect(0, 0, W, H));
+  scroll.setHasVerticalScroller(true);
+  // Legacy scroller style, not autohiding: an overlay scrollbar appears only
+  // once someone scrolls, so a reader has no way of knowing that clauses
+  // continue below. For terms, that is the difference between agreeing to
+  // what you read and agreeing to what you were shown.
+  scroll.setScrollerStyle(0);
+  scroll.setAutohidesScrollers(false);
+  scroll.setBorderType(2);
+  scroll.setDrawsBackground(false);
+  const text = $.NSTextView.alloc.initWithFrame($.NSMakeRect(0, 0, W, H));
+  text.setEditable(false);
+  text.setDrawsBackground(false);
+  if (!text.readRTFDFromFile(rtfPath)) return '__failed__';
+  scroll.setDocumentView(text);
+  alert.setAccessoryView(scroll);
+
+  const win = alert.window;
+  win.setLevel(8);
+  app.activateIgnoringOtherApps(true);
+  win.makeKeyAndOrderFront($());
+  return Number(alert.runModal) === 1000 ? '__agreed__' : '__declined__';
+}
+"""
+
+
+def _rtf_escape(text: str) -> str:
+    """RTF is ASCII with escapes; anything else has to be spelled out."""
+    out: list[str] = []
+    for char in text:
+        if char in "\\{}":
+            out.append("\\" + char)
+        elif ord(char) < 128:
+            out.append(char)
+        else:
+            # \\uN with a replacement character for readers that cannot show it.
+            out.append(f"\\u{ord(char)}?")
+    return "".join(out)
+
+
+def terms_rtf(*, updated: bool = False) -> str:
+    """The clauses as RTF, with each heading bold and ending in a colon.
+
+    `updated` prepends a notice. Being asked again with no explanation looks
+    like the app forgot; saying the terms changed is both clearer and the
+    reason the question is being put a second time.
+    """
+    lines = [
+        r"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fswiss Helvetica;}}",
+        r"\fs24",
+    ]
+    if updated:
+        lines.append(
+            r"\b These terms have changed since you last agreed to them.\b0"
+            r"  Please review them again.\par"
+        )
+        lines.append(r"\par")
+    for number, (heading, body) in enumerate(TERMS_CLAUSES, 1):
+        lines.append(
+            rf"\b {number}. {_rtf_escape(heading)}:\b0  {_rtf_escape(body)}\par"
+        )
+        lines.append(r"\par")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def terms_fingerprint() -> str:
+    """Identifies this wording, so changed terms are shown again."""
+    import hashlib
+
+    return hashlib.sha256(TERMS.encode("utf-8")).hexdigest()[:16]
+
+
+def _terms_record() -> dict:
+    """What has been accepted on this Mac, if anything."""
+    import json
+
+    try:
+        return json.loads(
+            (APP_SUPPORT / "accepted-terms.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return {}
+
+
+def terms_accepted() -> bool:
+    """Has *this* wording been accepted on this Mac?
+
+    The fingerprint covers the text itself, so any change to the terms —
+    not merely a version number someone remembered to bump — requires a fresh
+    acceptance. That is deliberate: re-consent should follow the words the
+    user is actually agreeing to.
+    """
+    record = _terms_record()
+    if record.get("fingerprint") == terms_fingerprint():
+        return True
+    # Older records, and the acceptance history added later.
+    return any(
+        entry.get("fingerprint") == terms_fingerprint()
+        for entry in record.get("accepted", [])
+    )
+
+
+def terms_changed_since_last_accepted() -> bool:
+    """True when something was accepted before, but not this wording.
+
+    Distinguishes a first run from an update, so the user can be told which
+    they are looking at rather than left wondering why they are being asked
+    again.
+    """
+    record = _terms_record()
+    if not record:
+        return False
+    return not terms_accepted()
+
+
+def record_terms_acceptance() -> None:
+    """Append this acceptance to the local record.
+
+    Kept as a list rather than overwritten, so which wording was accepted and
+    when remains answerable after the terms change. Nothing here is
+    transmitted; it exists so the question "what did I agree to, and when?"
+    has an answer on the user's own machine.
+    """
+    import datetime
+    import json
+
+    record = _terms_record()
+    history = list(record.get("accepted", []))
+    if "fingerprint" in record and not history:
+        # Carry an older single-entry record forward rather than losing it.
+        history.append(
+            {
+                "fingerprint": record["fingerprint"],
+                "accepted_at": record.get("accepted_at", "unknown"),
+            }
+        )
+    history.append(
+        {
+            "fingerprint": terms_fingerprint(),
+            "accepted_at": datetime.datetime.now()
+            .astimezone()
+            .isoformat(timespec="seconds"),
+        }
+    )
+    try:
+        APP_SUPPORT.mkdir(parents=True, exist_ok=True)
+        (APP_SUPPORT / "accepted-terms.json").write_text(
+            json.dumps(
+                {"fingerprint": terms_fingerprint(), "accepted": history}, indent=2
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        # Unable to record it: better to ask again next time than to fail.
+        pass
+
+
+def _terms_sheet(*, updated: bool = False) -> str | None:
+    """Show the terms with bold headings. None if the sheet could not run.
+
+    Returns the same button labels as `ask`, so the caller does not care which
+    implementation answered.
+    """
+    import tempfile
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".rtf", delete=False, encoding="ascii", errors="backslashreplace"
+        ) as handle:
+            handle.write(terms_rtf(updated=updated))
+            rtf_path = handle.name
+    except OSError:
+        return None
+
+    try:
+        title = (
+            "SocialMCP — Terms of Use (updated)"
+            if updated
+            else "SocialMCP — Terms of Use"
+        )
+        result = _run_jxa(
+            TERMS_SCRIPT, [title, rtf_path, "Agree and continue", "Quit"]
+        )
+    finally:
+        Path(rtf_path).unlink(missing_ok=True)
+
+    if result is None or result.returncode != 0:
+        if result is not None:
+            trace(f"terms: sheet failed ({result.stderr.strip()[:120]})")
+        return None
+    answer = (result.stdout or "").strip()
+    if answer == "__agreed__":
+        return "Agree and continue"
+    if answer == "__declined__":
+        return "Quit"
+    trace(f"terms: sheet returned {answer!r}")
+    return None
+
+
+def terms_flow() -> bool:
+    """Show the terms once, before anything else happens. False means quit.
+
+    Deliberately the first thing on screen, and deliberately only once: it
+    comes before any app is detected or any file written, and the wording is
+    fingerprinted so a future change is shown again rather than assumed.
+    """
+    if terms_accepted():
+        trace("terms: already accepted")
+        return True
+
+    updated = terms_changed_since_last_accepted()
+    trace(f"terms: asking (updated={updated})")
+    answer = _terms_sheet(updated=updated)
+    if answer is None:
+        trace("terms: rich sheet unavailable, using a plain dialog")
+        preamble = (
+            "These terms have changed since you last agreed to them. Please"
+            " review them again.\n\n"
+            if updated
+            else ""
+        )
+        answer = ask(
+            preamble + TERMS,
+            title="SocialMCP — Terms of Use" + (" (updated)" if updated else ""),
+            buttons=("Quit", "Agree and continue"),
+        )
+    if answer != "Agree and continue":
+        trace("terms: declined, nothing written")
+        return False
+    record_terms_acceptance()
+    trace("terms: accepted")
+    return True
 
 
 def reveal(path: Path) -> None:
@@ -126,7 +739,9 @@ def embedding_available(config) -> bool:
     return any(name.split(":")[0] == wanted for name in models)
 
 
-def build_setup_report(results, drop_folder: Path, *, embeddings: bool) -> tuple[str, tuple[str, ...]]:
+def build_setup_report(
+    results, *, embeddings: bool, first_run: bool = True
+) -> tuple[str, tuple[str, ...]]:
     """The dialog text and buttons for a finished setup run.
 
     Separated from display so the wording can be tested. Every result status
@@ -165,20 +780,26 @@ def build_setup_report(results, drop_folder: Path, *, embeddings: bool) -> tuple
 
     lines += [
         "",
-        "Next:",
+        f'Next: click "{ACTION_LOAD}" and pick the .zip LinkedIn sent you.',
         "",
-        '1. Click "Choose my export…" below and pick the .zip LinkedIn sent you.',
-        "   Pick the .zip exactly as you downloaded it — do not unzip it first.",
-        "   (Don't have it yet? LinkedIn: Settings & Privacy -> Data Privacy ->",
-        "    Get a copy of your data. Choose the larger archive; it arrives by",
-        "    email, usually within a day.)",
+        "Keep it as the .zip — double-clicking a .zip unzips it, and the .zip is"
+        " what SocialMCP reads. The chooser opens in Downloads, where browsers put"
+        " it, but you can pick it from anywhere.",
         "",
-        "2. Quit and reopen your AI app.",
+        "Don't have it yet? LinkedIn -> Settings & Privacy -> Data Privacy -> Get a"
+        " copy of your data. Choose the larger archive; it arrives by email, usually"
+        " within a day.",
         "",
-        '3. Ask it: "what can you do with my network?"',
+        "Then quit and reopen your AI app and ask it:",
+        '  "what can you do with my network?"',
         "",
-        "You can also drop exports straight into this folder at any time:",
-        f"   {drop_folder}",
+        # Said once, where someone will actually read it, rather than behind an
+        # "I agree" gate before they have seen what the app does. Apache-2.0
+        # already disclaims warranty; this is the plain-language version, and
+        # `SocialMCP license` prints the full text.
+        "Free and open source under Apache-2.0, provided as-is with no warranty."
+        " SocialMCP uploads nothing and collects no analytics — though answers your"
+        " assistant gives you travel to whoever runs it.",
     ]
     if restart:
         lines += ["", f"Restart needed for: {', '.join(r.client for r in restart)}"]
@@ -189,18 +810,37 @@ def build_setup_report(results, drop_folder: Path, *, embeddings: bool) -> tuple
             "Optional: searches currently match words literally. Installing Ollama",
             "(free, runs on this Mac, nothing uploaded) lets you search by meaning.",
         ]
-        buttons.append("Get Ollama")
+        if not first_run:
+            buttons.append("Get Ollama")
 
     # Offered only when there is something to disconnect. A user who will
     # never open a terminal still needs a way out, and the app's second launch
     # is the only place they will look.
-    if connected and not blocked:
+    # Not on a first run: offering to disconnect something the user connected
+    # ten seconds ago is noise, and it competes for one of three button slots
+    # with the only thing they actually need to do next. It returns when they
+    # open the app again, which is where someone looks to undo an install.
+    if connected and not blocked and not first_run:
         buttons.append("Disconnect")
-    buttons.append(ACTION_FOLDER)
-    # Last button is the default, and this is the one thing the user must do
-    # next. Previously the default was "open a folder so you can drag a file
-    # into it", which is a step, not an outcome.
-    buttons.append(ACTION_IMPORT)
+
+    # One action. Every extra button here was a decision the user had to make
+    # about something they had not done yet, and each alternative route cost
+    # either another permission prompt or another place for the file to be.
+    buttons.append(ACTION_LOAD)
+
+    # `display dialog` takes three buttons and fails silently with more.
+    if len(buttons) > MAX_DIALOG_BUTTONS:
+        optional = [b for b in buttons if b != ACTION_LOAD]
+        keep = optional[: MAX_DIALOG_BUTTONS - 1]
+        dropped = [b for b in optional if b not in keep]
+        if dropped:
+            lines += [
+                "",
+                "Also available when you open SocialMCP again: "
+                + ", ".join(dropped)
+                + ".",
+            ]
+        buttons = [*keep, ACTION_LOAD]
     return "\n".join(lines), tuple(buttons)
 
 
@@ -211,16 +851,16 @@ def _run_setup(report) -> tuple[Any, Any, Any]:
     the ordering guarantee — UI first, work second — is visible in one place.
     """
     from socialmcp import clients as clients_module
-    from socialmcp.clients import setup_all
+    from socialmcp.clients import detected_clients
     from socialmcp.config import load_config
 
+    trace("step: load_config + ensure_dirs")
     report.step("Creating your data folder")
     config = load_config()
     config.ensure_dirs()
     drop = config.drop_dir / "linkedin"
     report.done("Created your data folder")
 
-    env = {"SOCIALMCP_HOME": str(config.home), "SOCIALMCP_DROP_DIR": str(config.drop_dir)}
     # The bundle's own executable is the launch command, so the config a client
     # receives keeps working with no Python installed on the machine.
     command = launch_command()
@@ -228,19 +868,23 @@ def _run_setup(report) -> tuple[Any, Any, Any]:
         command=command[0], args=command[1:]
     )
 
-    # The slow step: probing for installed AI apps shells out to their CLIs,
-    # and macOS may raise a folder-permission prompt during it. Both are why
-    # the window has to exist before this runs.
+    # Detection only: no file is touched until the user has said which apps
+    # to connect. `installed` is a path check, so this is fast and reads
+    # nothing but directory existence.
+    trace("step: detecting AI apps")
     report.step("Looking for your AI apps")
-    _, results = setup_all(env=env)
-    found = ", ".join(r.client for r in results) if results else "none found"
-    report.done(f"Checked for AI apps ({found})")
+    detected = detected_clients()
+    trace(f"step: detected {[c.display_name for c in detected]}")
+    found = ", ".join(c.display_name for c in detected) if detected else "none found"
+    report.done(f"Found: {found}")
 
+    trace("step: checking for a local embedding model")
     report.step("Checking for local AI search")
     embeddings = embedding_available(config)
+    trace("step: embedding check - done")
     report.done("Checked for local AI search")
 
-    return config, drop, (results, embeddings)
+    return config, drop, (detected, embeddings)
 
 
 def setup_flow() -> int:
@@ -249,6 +893,7 @@ def setup_flow() -> int:
     # binary inside a mounted disk image produces an install that works until
     # the image is ejected and then fails silently, which is worse than not
     # installing at all.
+    trace("launch: checking where the app is running from")
     mounted = running_from_removable_location()
     if mounted is not None:
         choice = dialog(
@@ -269,6 +914,10 @@ def setup_flow() -> int:
     # moving or replacing the app never touches the user's data.
     os.environ.setdefault("SOCIALMCP_HOME", str(APP_SUPPORT))
 
+    # Terms first, before anything is detected or written.
+    if not terms_flow():
+        return 0
+
     # A window appears before any of the work below. A double-click that shows
     # nothing for several seconds reads as a broken app, and a permission
     # prompt from an application that has not introduced itself reads as
@@ -277,8 +926,35 @@ def setup_flow() -> int:
 
     from socialmcp.clients import known_clients, setup_all
 
-    config, drop, (results, embeddings) = run_with_progress(_run_setup, steps=3)
+    config, drop, (detected, embeddings) = run_with_progress(
+        _run_setup, steps=3, intro="Setting up… finding your AI apps."
+    )
     env = {"SOCIALMCP_HOME": str(config.home), "SOCIALMCP_DROP_DIR": str(config.drop_dir)}
+
+    # One app found: no decision to make, so do not manufacture one. Several:
+    # ask, because which of someone's editors gets a new config entry is
+    # their call, not a detection result.
+    chosen_keys: list[str] | None = None
+    if len(detected) > 1:
+        names = [client.display_name for client in detected]
+        trace(f"consent: asking about {names}")
+        picked = choose_clients(names)
+        if picked is None:
+            trace("consent: cancelled, nothing written")
+            return 0
+        chosen_keys = [c.key for c in detected if c.display_name in picked]
+        trace(f"consent: connecting {chosen_keys}")
+        if not chosen_keys:
+            dialog(
+                "Nothing was selected, so no app was connected.\n\n"
+                "Open SocialMCP again whenever you want to connect one.",
+                buttons=("OK",),
+            )
+            return 0
+
+    trace("configuring the chosen apps")
+    _, results = setup_all(env=env, only=chosen_keys)
+    trace(f"configured: {[(r.client, r.status) for r in results]}")
 
     if not results:
         choice = dialog(
@@ -295,13 +971,19 @@ def setup_flow() -> int:
 
     # `embeddings` was already probed inside the progress window; probing again
     # here would add a second silent delay after the window has closed.
-    message, buttons = build_setup_report(results, drop, embeddings=embeddings)
+    trace("about to show the first dialog")
+    first_run = not config.db_path.exists()
+    message, buttons = build_setup_report(
+        results, embeddings=embeddings, first_run=first_run
+    )
     choice = ask(message, buttons=buttons)
 
     if choice == "Replace it":
         # The user asked for this app to win, so overwrite the other entry.
         _, results = setup_all(env=env, force=True)
-        message, buttons = build_setup_report(results, drop, embeddings=embeddings)
+        message, buttons = build_setup_report(
+            results, embeddings=embeddings, first_run=first_run
+        )
         choice = ask(message, buttons=tuple(b for b in buttons if b != "Replace it"))
 
     if choice == "Disconnect":
@@ -311,104 +993,127 @@ def setup_flow() -> int:
         subprocess.run(["open", "https://ollama.com"], check=False, timeout=30)
         return 0
 
-    if choice == ACTION_IMPORT:
-        return import_flow(config, drop)
-
-    reveal(drop)
-    return 0
+    return load_flow(config, drop)
 
 
 def ask(message: str, *, buttons: tuple[str, ...], title: str = "SocialMCP") -> str:
-    """Show a choice, in a real window when possible.
+    """Show a choice. AppleScript, so nothing is bundled and nothing is asked for.
 
-    AppleScript's `display dialog` accepts at most three buttons; the summary
-    can legitimately offer four, and when it does, osascript fails and the
-    caller cannot tell the difference between an error and a click. Tk is
-    already bundled for the progress window, so prefer it and keep the
-    AppleScript path as the fallback with the list trimmed to what it supports.
+    `display dialog` accepts at most three buttons and fails silently with
+    more — osascript errors and the caller cannot tell that from a click — so
+    the limit is enforced here rather than hoped for.
     """
-    from ui import summary_window  # type: ignore[import-not-found]
+    if len(buttons) > MAX_DIALOG_BUTTONS:
+        raise ValueError(
+            f"macOS dialogs take at most {MAX_DIALOG_BUTTONS} buttons, got {buttons}"
+        )
+    return dialog(message, title=title, buttons=buttons)
 
-    answer = summary_window(message, buttons=buttons, title=title)
-    if answer is not None:
-        return answer
-    return dialog(message, title=title, buttons=buttons[-3:])
 
+def downloads_exports() -> list[Path]:
+    """Candidate exports sitting in ~/Downloads, newest first.
 
-def import_flow(config, drop: Path) -> int:
-    """Let the user pick their export, then ingest it.
+    Downloads is the only place SocialMCP looks, deliberately. A browser puts
+    the export there, and every alternative — a file panel, a watched folder of
+    our own — added a second way to do the same thing, more permission prompts,
+    and a decision for the user to get wrong. One source, one button.
 
-    Replaces "open this folder and drag a file into it from another window",
-    which needed two Finder windows and an instruction nobody read. The picker
-    is also why the app asks for no folder permission: macOS hands over the one
-    chosen file and nothing else.
+    LinkedIn names the archive something like
+    `Complete_LinkedInDataExport_11-15-2026.zip`, so those sort first; any other
+    .zip is still offered, because the name has changed before and will again.
     """
-    import shutil
+    downloads = Path.home() / "Downloads"
+    try:
+        entries = [path for path in downloads.iterdir() if path.is_file()]
+    except OSError:
+        # No permission, or no such folder. The caller explains what to do.
+        return []
 
+    archives = [path for path in entries if path.name.lower().endswith(".zip")]
+    named = [path for path in archives if "linkedin" in path.name.lower()]
+    return sorted(named or archives, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def load_flow(config, drop: Path) -> int:
+    """Read the newest export out of ~/Downloads, and say what happened."""
+    from progress import run_with_progress  # type: ignore[import-not-found]
     from ui import choose_export  # type: ignore[import-not-found]
 
-    chosen = choose_export()
-    if chosen is None:
-        reveal(drop)
-        return 0
+    # Always Downloads. Pointing the panel at a computed path risked handing
+    # it something that is not a folder, and the panel then shows Recents —
+    # a column view of /private/var temporary paths, which is disorienting and
+    # looks broken.
+    start = Path.home() / "Downloads"
+    trace(f"load: opening the chooser at {start}")
 
-    if chosen.is_dir():
+    target = choose_export(start)
+    if target is None:
+        trace("load: cancelled")
+        return 0
+    trace(f"load: chose {target.name}")
+
+    # The panel is told to offer archives only, but that is a convenience and
+    # not a guarantee — a filter can be bypassed, and a future source may be
+    # mapped wrongly. Checking here means the failure is a sentence the user
+    # can act on rather than a parser error.
+    from ui import archive_suffixes  # type: ignore[import-not-found]
+
+    allowed = archive_suffixes()
+    if target.is_dir() or not target.name.lower().endswith(allowed):
+        trace(f"load: rejected {target.name} (not {allowed})")
         dialog(
-            f"{chosen.name} is a folder, not the .zip LinkedIn gave you.\n\n"
-            "Double-clicking the download unzips it, which is easy to do by "
-            "accident. Pick the original .zip instead — or drag the .zip into "
-            "the folder that opens next.",
+            f"{target.name} is not a LinkedIn export.\n\n"
+            f"SocialMCP reads the {' or '.join(allowed)} archive LinkedIn emails you,"
+            " exactly as\nyou downloaded it. Double-clicking it unzips it, which is easy"
+            " to do\nby accident — in that case download it again, or pick the"
+            " original.\n\n"
+            "To request one: LinkedIn -> Settings & Privacy -> Data Privacy ->\n"
+            "Get a copy of your data. Choose the larger archive.",
             buttons=("OK",),
         )
-        reveal(drop)
-        return 1
-
-    drop.mkdir(parents=True, exist_ok=True)
-    target = drop / chosen.name
-    try:
-        if chosen.resolve() != target.resolve():
-            shutil.copy2(chosen, target)
-    except OSError as exc:
-        dialog(f"Could not copy {chosen.name}:\n\n{exc}", buttons=("OK",))
         return 1
 
     def work(report):
-        report.step(f"Reading {chosen.name}")
-        from socialmcp.core.db import connect
+        import shutil
+
+        report.step(f"Reading {target.name}")
+        from socialmcp.core.db import open_database
         from socialmcp.core.ingest import ingest_path
 
-        db = connect(config)
-        result = ingest_path(db, config, target)
-        report.done(f"Read {chosen.name}")
-        report.step("Counting your network")
-        stats = db.execute("select count(*) from contacts").fetchone()[0]
-        report.done("Counted your network")
-        return result, stats
+        # Copied in first, so the original download is never moved or deleted:
+        # it is the user's file, and ingest archives what it reads.
+        drop.mkdir(parents=True, exist_ok=True)
+        staged = drop / target.name
+        if not staged.exists():
+            shutil.copy2(target, staged)
 
-    from progress import run_with_progress  # type: ignore[import-not-found]
+        db = open_database(config)
+        result = ingest_path(db, config, staged)
+        report.done(f"Read {target.name}")
+        return result, db.scalar("select count(*) from contacts")
 
     try:
         _result, contacts = run_with_progress(
-            work, steps=2, title="Reading your export", intro="This stays on your Mac."
+            work, steps=1, intro=f"Reading {target.name} — this stays on your Mac."
         )
-    except Exception as exc:
+    except Exception as exc:  # shown to the user, not swallowed
+        trace(f"load: failed on {target.name}: {exc!r}")
         dialog(
-            f"Could not read {chosen.name}:\n\n{exc}\n\n"
-            "If this was not a LinkedIn export, try the original .zip from "
-            "LinkedIn: Settings & Privacy -> Data Privacy -> Get a copy of your data.",
+            f"Could not read {target.name}:\n\n{exc}\n\n"
+            "If that is not your LinkedIn export, remove it from Downloads or\n"
+            "download the export again, then open SocialMCP once more.",
             buttons=("OK",),
         )
         return 1
 
-    ask(
-        f"Imported {chosen.name}.\n\n"
+    trace(f"load: done, {contacts} contacts")
+    dialog(
+        f"Loaded {target.name}.\n\n"
         f"Your network now has {contacts} people.\n\n"
         "Quit and reopen your AI app, then ask it:\n"
         '  "what can you do with my network?"\n\n'
-        "Next time, you can drop a new export straight into:\n"
-        f"  {drop}\n"
-        "or open SocialMCP again and choose it.",
-        buttons=(ACTION_FOLDER, ACTION_DONE),
+        "Next time: put a newer export in Downloads and open SocialMCP again.",
+        buttons=("OK",),
     )
     return 0
 
@@ -468,6 +1173,20 @@ def disconnect_flow(config) -> int:
 
 
 def main(argv: list[str]) -> int:
+    # Logging is set up before anything else, including the stdio server, so a
+    # failure during startup leaves a record. `serve` writes to the same file,
+    # which is how a client-launched server can be debugged at all.
+    import applog  # type: ignore[import-not-found]
+
+    from socialmcp import __version__
+
+    applog.configure(APP_SUPPORT)
+    applog.start_session(version=__version__, bundle=app_bundle_root(), argv=argv)
+    if not (argv and argv[0] == "serve"):
+        # The stdio protocol owns stdout; wrapping subprocess is safe either
+        # way, but the server starts no children worth tracing.
+        applog.instrument_subprocess()
+
     if argv and argv[0] == "serve":
         # stdio transport: nothing may be written to stdout except protocol.
         os.environ.setdefault("SOCIALMCP_HOME", str(APP_SUPPORT))

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "socialmcp"
-version = "0.1.2a3"
+version = "0.1.2a4"
 description = "Local-first, ToS-compliant personal CRM for your social graph, delivered as an MCP server"
 readme = "README.md"
 requires-python = ">=3.11"

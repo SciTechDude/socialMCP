@@ -39,8 +39,18 @@ are separate steps, and the second is the one that does the work: dragging only
 copies the app, and nothing sets itself up until you open it. It then finds your
 AI app, connects itself, and asks you to pick your LinkedIn export.
 
-No Python, no terminal, and **no access to your files** — you choose one `.zip`
-and it reads that one file.
+No Python and no terminal. When you pick your export, macOS may ask whether
+SocialMCP can open your Downloads, Desktop or Documents folder — that is macOS
+asking on behalf of the file-chooser, and **you can say no to all of them** and
+drag the `.zip` into the app's own folder instead. Either way it reads only
+that one file.
+
+**One honest caveat about where your data goes.** SocialMCP uploads nothing.
+But when you ask your assistant a question, the contacts it reads to answer you
+become part of that conversation — so whoever runs the assistant (Anthropic,
+OpenAI, Google) sees them, exactly as they see everything else you type. That
+is true of any cloud assistant and is outside SocialMCP's control. A model
+running on your own machine is the only way to avoid it.
 
 > **Pick the file that matches your Mac.** There are two, and the wrong one
 > will not open at all:
@@ -56,11 +66,21 @@ and it reads that one file.
 > If you pick wrong, macOS reports that the app is damaged or cannot be opened.
 > Nothing is broken: delete it and download the other file.
 
-The download is **signed with an Apple Developer ID and notarized by Apple**,
-so it opens by double-clicking with no security warning to click through. You
-never need to bypass Gatekeeper or strip a quarantine flag to run it — if any
-instructions tell you to, treat that as a sign the file did not come from
-[the releases page](https://github.com/SciTechDude/socialMCP/releases). To
+The download is **signed with an Apple Developer ID and notarized by Apple**.
+
+**The first time you open it, macOS will ask "are you sure?"** — that is normal
+for anything downloaded from the web, and it is what success looks like. The
+message should read:
+
+> "SocialMCP" is an app downloaded from the Internet. Are you sure you want to
+> open it? **Apple checked it for malicious software and none was detected.**
+
+Click **Open**. It happens once, and that second sentence is the notarization.
+
+What you should *never* have to do is bypass anything. If macOS says the
+developer "cannot be verified", offers only **Move to Trash**, or you are told
+to visit Privacy & Security or strip a quarantine flag, the file did not come
+from [the releases page](https://github.com/SciTechDude/socialMCP/releases). To
 check a download yourself before opening it:
 
 ```bash
@@ -184,7 +204,8 @@ Each of these has caveats worth knowing — see [CAPABILITIES.md](CAPABILITIES.m
 - Cannot send messages, accept invitations or change anything on the social network. It is read-only by design.
 - Invitation history covers roughly the last six months, so older connections cannot be attributed to whoever sent the invitation.
 - Knows nothing about events by name on its own. Your assistant supplies the dates; SocialMCP matches them against when you met people.
-- Everything is stored in one file on this computer. Nothing is uploaded, and deleting that file deletes all of it.
+- Cannot control what your AI assistant does with an answer. SocialMCP uploads nothing, but the results it hands back become part of your conversation — so whoever runs that assistant (Anthropic, OpenAI, Google) sees whatever it read to answer you, exactly as they see the rest of the chat. A model running on your own machine is the only way to avoid that.
+- Everything is stored in one file on this computer. SocialMCP uploads nothing and deleting that file deletes all of it.
 
 <!-- capabilities:end -->
 
@@ -279,6 +300,20 @@ Where that JSON goes, by client:
 | Continue | `mcpServers` in `~/.continue/config.yaml` |
 | Windsurf, Cline, LibreChat, Goose, … | their own MCP config file, same command |
 | Your own code | `mcp` SDK (Python/TS), Pydantic-AI, LangChain MCP adapters, … |
+
+> **Tested with:** the Mac app has been tested end-to-end with **Claude Code**
+> and **Claude Desktop** only. The other clients are wired up the same way —
+> same command, same JSON — and `socialmcp setup` detects them and writes their
+> config, but nobody has yet confirmed the whole flow on them. If you try one,
+> [say how it went](https://github.com/SciTechDude/socialMCP/discussions); that
+> is the single most useful thing you can report.
+>
+> **Not detected automatically:** OpenAI Codex CLI (`~/.codex/config.toml`),
+> Continue (`~/.continue/config.yaml`) and Goose
+> (`~/.config/goose/config.yaml`) keep their settings in TOML or YAML rather
+> than JSON. SocialMCP will not edit those formats, because doing it without
+> mangling someone's comments and layout is a different job. Add the command
+> below by hand and they work fine.
 
 Check your client's docs for the exact key name — the command and args never
 change. Restart the client afterwards, then ask it to call

@@ -118,7 +118,24 @@ def _win() -> bool:
 
 
 def known_clients() -> list[ClientTarget]:
-    """Config locations per client, per platform."""
+    """Config locations per client, per platform.
+
+    Every client here keeps its MCP servers in JSON, which is what the merge
+    below can edit safely. Deliberately absent, for that reason:
+
+    * **OpenAI Codex CLI** — `~/.codex/config.toml`, TOML.
+    * **Continue** — `~/.continue/config.yaml`, YAML.
+    * **Goose** — `~/.config/goose/config.yaml`, YAML.
+
+    Adding those means writing TOML or YAML while preserving a user's comments
+    and formatting, which is a different and riskier job than merging a JSON
+    object. Until then they are listed in the README as a manual step: the
+    launch command is the same for every client, so pasting it by hand works.
+
+    Detection is by whether the config directory exists, so a path that turns
+    out to be wrong means the client is simply not detected. It can never cause
+    a write to the wrong file.
+    """
     home = Path.home()
     appdata = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
 
@@ -129,12 +146,20 @@ def known_clients() -> list[ClientTarget]:
         vscode = app_support / "Code" / "User" / "mcp.json"
         vscode_dir = app_support / "Code"
         zed = home / ".config" / "zed" / "settings.json"
+        cline = (
+            app_support / "Code" / "User" / "globalStorage"
+            / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
+        )
     elif _win():
         claude_desktop = appdata / "Claude" / "claude_desktop_config.json"
         claude_dir = appdata / "Claude"
         vscode = appdata / "Code" / "User" / "mcp.json"
         vscode_dir = appdata / "Code"
         zed = home / "AppData" / "Roaming" / "Zed" / "settings.json"
+        cline = (
+            appdata / "Code" / "User" / "globalStorage"
+            / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
+        )
     else:
         config = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
         claude_desktop = config / "Claude" / "claude_desktop_config.json"
@@ -142,6 +167,13 @@ def known_clients() -> list[ClientTarget]:
         vscode = config / "Code" / "User" / "mcp.json"
         vscode_dir = config / "Code"
         zed = config / "zed" / "settings.json"
+        cline = (
+            config / "Code" / "User" / "globalStorage"
+            / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
+        )
+
+    # Same on every platform: both of these keep config in the home directory.
+    gemini = home / ".gemini" / "settings.json"
 
     return [
         ClientTarget(
@@ -179,6 +211,20 @@ def known_clients() -> list[ClientTarget]:
             config_path=vscode,
             servers_key="servers",
             detect_paths=(vscode_dir,),
+            notes="Reload the VS Code window.",
+        ),
+        ClientTarget(
+            key="gemini-cli",
+            display_name="Gemini CLI",
+            config_path=gemini,
+            detect_paths=(gemini.parent,),
+            notes="Restart the Gemini CLI session.",
+        ),
+        ClientTarget(
+            key="cline",
+            display_name="Cline (VS Code)",
+            config_path=cline,
+            detect_paths=(cline.parent,),
             notes="Reload the VS Code window.",
         ),
         ClientTarget(
@@ -222,6 +268,22 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(text)
 
 
+def _launched_from_app_bundle() -> bool:
+    """Is this code running inside the .app, rather than from a terminal?
+
+    It decides whether other tools' CLIs may be invoked: a child process's
+    file access is attributed to the responsible parent, so a CLI that reaches
+    into protected folders produces permission prompts in the app's name. From
+    a terminal the responsible parent is the terminal, which already has the
+    access it needs, so the CLI is the better choice there.
+    """
+    import sys
+
+    if not getattr(sys, "frozen", False):
+        return False
+    return ".app/Contents/" in str(Path(sys.executable).resolve())
+
+
 def configure_client(
     target: ClientTarget,
     launch: LaunchCommand,
@@ -233,17 +295,36 @@ def configure_client(
     """Merge a socialmcp entry into one client's config file."""
     entry = server_entry(launch, env)
 
-    # Claude Code owns ~/.claude.json and rewrites it; use its CLI instead.
-    if target.key == "claude-code" and shutil.which("claude"):
+    # Claude Code owns ~/.claude.json, so its CLI used to be preferred for
+    # writing there. That is no longer done from the app, and the reason is
+    # measured rather than theoretical.
+    #
+    # `claude mcp list` takes about nine seconds and, while it runs, Claude
+    # Code launches every configured MCP server to inspect it. Claude Code
+    # touches Downloads, Documents and Desktop in the process — and since it
+    # is a child of whatever started it, macOS attributes that access to the
+    # *parent*. Launched from the Mac app, that parent is SocialMCP, so a user
+    # installing a tool that reads one file was asked for three folders it
+    # never touches. The log in packaging/macos/applog.py and the grant times
+    # in the TCC database line up exactly.
+    #
+    # Writing the JSON directly costs the risk that Claude Code rewrites the
+    # file, which is recoverable — reopening SocialMCP puts the entry back —
+    # against three unexplained permission prompts, which are not.
+    #
+    # The CLI is still used when the *user* ran `socialmcp setup` themselves:
+    # their terminal is then the responsible process, which already has
+    # whatever access it needs, and the CLI keeps the file's ownership intact.
+    if (
+        target.key == "claude-code"
+        and shutil.which("claude")
+        and not _launched_from_app_bundle()
+    ):
         via_cli = _configure_via_claude_cli(
             target, launch, env=env, force=force, dry_run=dry_run
         )
         if via_cli is not None:
             return via_cli
-        # The CLI did not answer in time — it waits on a terminal when the app
-        # was launched from Finder. Editing the file is less safe, since Claude
-        # Code rewrites it, but it is the difference between a connected app and
-        # a dead end.
 
     try:
         config = _read_json(target.config_path)
@@ -302,14 +383,17 @@ def _configure_via_claude_cli(
     force: bool,
     dry_run: bool,
 ) -> SetupResult:
-    # Bounded and detached from stdin. Launched from Finder this probe hung for
-    # the full timeout, which the app spent showing nothing at all — the CLI
-    # waits on a terminal it does not have. Ten seconds is generous for a
-    # listing; past that, writing the config file directly is the better
-    # fallback, and CLIENT_PROBE_TIMEOUT documents the intent.
+    # `mcp get socialmcp`, not `mcp list`: the only question is whether our own
+    # entry exists, and listing would enumerate every MCP server the user has
+    # configured — none of this program's business, and a meaningful amount of
+    # private information to pull into a setup routine. It is also far faster;
+    # `list` launches each configured server to inspect it.
+    #
+    # Bounded and detached from stdin: launched from Finder the CLI waits on a
+    # terminal it does not have, and the app has only this to show meanwhile.
     try:
         listed = subprocess.run(
-            ["claude", "mcp", "list"],
+            ["claude", "mcp", "get", SERVER_KEY],
             capture_output=True,
             text=True,
             check=False,
@@ -321,7 +405,10 @@ def _configure_via_claude_cli(
         # config file directly, which is second choice but far better than
         # reporting failure to someone who just wants the app connected.
         return None
-    if SERVER_KEY in listed.stdout and not force:
+    # Exit 0 means the server exists; anything else means it does not, which
+    # is the normal first-run case rather than an error.
+    already = listed.returncode == 0 and SERVER_KEY in listed.stdout
+    if already and not force:
         return SetupResult(target.display_name, "already", "already registered", "claude mcp")
 
     command = ["claude", "mcp", "add", SERVER_KEY, "-s", "user"]
