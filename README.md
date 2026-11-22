@@ -474,15 +474,17 @@ socialmcp uninstall --dry-run    # show exactly what would change
 socialmcp uninstall --purge-data # also delete the database and folders
 ```
 
-Mac app users can click **Disconnect** on the app's second launch instead.
+Mac app users can click **Remove SocialMCP…** on the app's second launch
+instead. It asks before it deletes anything, and disconnecting without
+deleting is the default.
 
 ### Exactly what each method touches
 
 | What you do | AI app settings | Your database and folders | The app itself |
 |---|---|---|---|
 | Drag the app to the Trash | untouched — the entry stays and will point at a missing binary | **kept** | removed |
-| `socialmcp uninstall`, or **Disconnect** in the app | the `socialmcp` entry is removed; the file is backed up first | **kept** | kept |
-| `socialmcp uninstall --purge-data`, or **Disconnect → Delete my data** | same as above | **deleted** — database, drop folder, processed archives | kept |
+| `socialmcp uninstall`, or **Remove SocialMCP…** in the app | the `socialmcp` entry is removed; the file is backed up first | **kept** | kept |
+| `socialmcp uninstall --purge-data`, or **Remove SocialMCP… → Delete my data** | same as above | **deleted** — database, drop folder, processed archives | kept |
 | `socialmcp uninstall --dry-run` | nothing — prints what it would do | nothing | nothing |
 
 **What "deleted" means, precisely.** Only these, and only when they sit inside

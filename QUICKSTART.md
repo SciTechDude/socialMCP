@@ -309,8 +309,8 @@ a Windows or Linux installer, for instance.
 ## Removing it
 
 **Disconnect it from your AI apps** — open SocialMCP again and click
-**Disconnect**. Your data stays, so reconnecting later resumes exactly where you
-left off. (From a terminal: `socialmcp uninstall`.)
+**Remove SocialMCP…**. Your data stays, so reconnecting later resumes exactly
+where you left off. (From a terminal: `socialmcp uninstall`.)
 
 **Delete everything** — after disconnecting, choose **Delete my data**. That
 removes the database, the drop folder and processed archives. Your own notes and
