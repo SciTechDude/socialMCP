@@ -441,6 +441,10 @@ def test_the_drop_folder_readme_is_written_for_a_human():
         assert jargon not in text.lower(), f"{jargon!r} means nothing to this reader"
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "ST_RDONLY"),
+    reason="statvfs flags are POSIX-only; the guard itself only ever runs on macOS",
+)
 def test_setup_refuses_to_run_from_a_mounted_disk_image(monkeypatch, tmp_path):
     """Registering a /Volumes path produces an install that dies on eject.
 
