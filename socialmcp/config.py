@@ -141,8 +141,8 @@ class Config:
                 "The app leaves this folder alone when you drag it to the Trash, on\n"
                 "purpose: deleting your notes as a side effect of removing an\n"
                 "application is not a decision it should make for you. To remove\n"
-                "both at once, open SocialMCP and choose Disconnect, then Delete my\n"
-                "data — or run `socialmcp uninstall --purge-data`.\n",
+                "both at once, open SocialMCP and choose Remove SocialMCP, then\n"
+                "Delete my data — or run `socialmcp uninstall --purge-data`.\n",
                 encoding="utf-8",
             )
 
