@@ -30,8 +30,22 @@ function run(argv) {
     // Matches the window bounds set by the layout script. Points, not pixels;
     // the @2x sharpness comes from drawing into a 2x bitmap below.
     const W = 600;
-    const H = 400;
+    const H = 500;
     const SCALE = 2;
+
+    // --- the one set of vertical positions, measured from the TOP ----------
+    //
+    // Finder places icons from the top of the window and AppKit draws from the
+    // bottom, which is how the first attempt ended up with 128-point icons
+    // reaching to y=394 of a 400-point window and colliding with the text.
+    // Every position is therefore declared here, from the top, and converted
+    // once at the point of drawing. dmg_settings.py reads the same numbers for
+    // its icon rows, and a test checks the bands do not overlap.
+    const ICON_ROW1_TOP = 150;      // SocialMCP.app, Applications
+    const HEADLINE_TOP = 280;
+    const SUBTITLE_TOP = 312;
+    const ICON_ROW2_TOP = 400;      // LICENSE.txt, README-AND-PRIVACY.txt
+    const VERSION_TOP = 30;
 
     const bitmap = $.NSBitmapImageRep.alloc
         .initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(
@@ -55,7 +69,7 @@ function run(argv) {
     // The arrow, pointing from the app icon to the Applications folder. Drawn
     // between the two icon positions the layout script uses (x=150 and x=450),
     // at the icons' vertical centre.
-    const arrowY = H - 170;
+    const arrowY = H - ICON_ROW1_TOP;
     const stroke = $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.55, 0.57, 0.62, 1.0);
     stroke.set;
     const shaft = $.NSBezierPath.bezierPath;
@@ -71,12 +85,19 @@ function run(argv) {
     head.closePath;
     head.fill;
 
-    drawCentred('Drag SocialMCP onto Applications', 22, 0.18, H - 268, W);
+    drawCentred('Drag SocialMCP onto Applications', 22, 0.18, H - HEADLINE_TOP, W);
     drawCentred('Then open it from Applications — it will not open from here.',
-                13, 0.42, H - 296, W);
+                13, 0.42, H - SUBTITLE_TOP, W);
     if (version) {
-        drawCentred(version, 11, 0.62, 26, W);
+        // Top corner, clear of both icon rows. It sat at the bottom before,
+        // where the second row of icons now is.
+        drawRight(version, 11, 0.62, H - VERSION_TOP, W - 24);
     }
+
+    // A faint separator above the second row, so the licence and privacy
+    // files read as reference material rather than as part of the install.
+    $.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.88, 0.88, 0.90, 1.0).set;
+    $.NSBezierPath.fillRect($.NSMakeRect(60, H - (ICON_ROW2_TOP - 78), W - 120, 1));
 
     $.NSGraphicsContext.restoreGraphicsState;
 
@@ -109,4 +130,14 @@ function drawCentred(text, size, grey, y, width) {
     const measured = string.sizeWithAttributes(attributes);
     const x = (width - measured.width) / 2;
     string.drawAtPointWithAttributes($.NSMakePoint(x, y), attributes);
+}
+
+function drawRight(text, size, grey, y, rightEdge) {
+    const colour = $.NSColor.colorWithCalibratedRedGreenBlueAlpha(grey, grey, grey + 0.04, 1.0);
+    const attributes = $.NSMutableDictionary.dictionary;
+    attributes.setObjectForKey($.NSFont.systemFontOfSizeWeight(size, 0.0), 'NSFont');
+    attributes.setObjectForKey(colour, 'NSColor');
+    const string = $.NSString.stringWithUTF8String(text);
+    const measured = string.sizeWithAttributes(attributes);
+    string.drawAtPointWithAttributes($.NSMakePoint(rightEdge - measured.width, y), attributes);
 }

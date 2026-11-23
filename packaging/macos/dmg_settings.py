@@ -38,10 +38,16 @@ files = [path for path in (app, licence, readme) if path]
 symlinks = {"Applications": "/Applications"}
 
 # --- window ---------------------------------------------------------------
-# 600x400 at the top-left-ish of a typical screen. Matches the background
-# image's dimensions exactly; a mismatch silently tiles or crops it.
-window_rect = ((200, 180), (600, 400))
-icon_size = 128
+# Matches the background image's dimensions exactly; a mismatch silently tiles
+# or crops it. The height has to accommodate two icon rows and the text band
+# between them: at 400 the second row of icons reached y=394 and collided with
+# the instruction text.
+window_rect = ((200, 180), (600, 500))
+
+# 112, not 128: an icon is drawn centred on its position and its filename sits
+# below that, so a row occupies icon_size + a label. Four rows' worth of
+# that plus the text band is what sets the window height above.
+icon_size = 112
 text_size = 13
 default_view = "icon-view"
 show_icon_preview = False
@@ -55,14 +61,18 @@ show_pathbar = False
 show_sidebar = False
 
 # --- icon positions ------------------------------------------------------
-# Horizontal centres at 150 and 450, vertically at 170 from the top of the
-# window. `dmg_background.js` draws its arrow between them at the same
-# height, so these three numbers move together.
+# Horizontal centres at 150 and 450; the two rows sit above and below the
+# instruction text. `dmg_background.js` declares the same two row positions
+# (ICON_ROW1_TOP, ICON_ROW2_TOP) and draws its arrow along the first, so
+# these numbers move together and a test checks they still agree.
+ICON_ROW1_TOP = 150
+ICON_ROW2_TOP = 400
+
 icon_locations = {
-    application: (150, 170),
-    "Applications": (450, 170),
-    "LICENSE.txt": (150, 330),
-    "README-AND-PRIVACY.txt": (450, 330),
+    application: (150, ICON_ROW1_TOP),
+    "Applications": (450, ICON_ROW1_TOP),
+    "LICENSE.txt": (150, ICON_ROW2_TOP),
+    "README-AND-PRIVACY.txt": (450, ICON_ROW2_TOP),
 }
 
 # --- format ---------------------------------------------------------------
