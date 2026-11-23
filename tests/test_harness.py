@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
+
 from socialmcp.core.harness import Harness
 from socialmcp.core.ingest import add_note
 
@@ -123,8 +125,13 @@ def test_embeddings_are_backfilled_when_a_provider_turns_up_later(
             calls.append(len(texts))
             return [[0.05] * config.embedding.dim for _ in texts]
 
+    # `vec_enabled` reports whether the sqlite-vec extension actually loaded,
+    # so forcing it on leaves no vec_contacts table to write into. Several
+    # CI runners cannot load SQLite extensions at all; there the honest
+    # outcome is to skip rather than to fake the capability.
+    if not db.vec_enabled:
+        pytest.skip("sqlite-vec is not available on this interpreter")
     monkeypatch.setattr(ingest_module, "make_embedder", lambda _cfg: Fake())
-    monkeypatch.setattr(db, "vec_enabled", True, raising=False)
     monkeypatch.setattr(config.embedding, "provider", "ollama")
 
     written = ingest_module.refresh_embeddings(db, config)
@@ -208,8 +215,9 @@ def test_the_backfill_thread_actually_indexes_without_being_asked(
         def embed(self, texts):
             return [[0.05] * config.embedding.dim for _ in texts]
 
+    if not db.vec_enabled:
+        pytest.skip("sqlite-vec is not available on this interpreter")
     monkeypatch.setattr(ingest_module, "make_embedder", lambda _cfg: Fake())
-    monkeypatch.setattr(db, "vec_enabled", True, raising=False)
     monkeypatch.setattr(config.embedding, "provider", "ollama")
     monkeypatch.setattr(harness_module, "BACKFILL_INTERVAL_SECONDS", 0.05)
     monkeypatch.setattr(harness_module, "BACKFILL_MAX_INTERVAL_SECONDS", 0.05)
