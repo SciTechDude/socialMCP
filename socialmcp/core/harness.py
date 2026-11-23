@@ -47,6 +47,23 @@ SETTLED_AGE_SECONDS = 5.0
 POLL_INTERVAL_SECONDS = 5.0
 STALE_FOLLOWUP_DAYS = 14
 
+# Embedding backfill.
+#
+# Importing an export already embeds everything it reads. The problem is when
+# no embedding provider is running at that moment: the contacts are left
+# marked dirty, and nothing ever came back for them — so meaning-based search
+# stayed off until the user somehow knew to ask for a reindex. Since the whole
+# feature is invisible when it is off, "somehow knew" means "never".
+#
+# So a provider that appears later is picked up on its own. Batches are small
+# because this shares the database with live queries, and the interval backs
+# off steeply when the provider is absent: on a machine with no Ollama, which
+# is most of them, this must cost nothing rather than probe a dead port every
+# minute forever.
+BACKFILL_BATCH = 64
+BACKFILL_INTERVAL_SECONDS = 30.0
+BACKFILL_MAX_INTERVAL_SECONDS = 1800.0
+
 
 @dataclass(slots=True)
 class HarnessStatus:
@@ -69,6 +86,7 @@ class Harness:
         self._backend = "off"
         self._ingests = 0
         self._lock = threading.RLock()
+        self._backfill_thread: threading.Thread | None = None
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -95,6 +113,11 @@ class Harness:
             self._thread.start()
             self._backend = "poll"
 
+        # Its own thread, not a step inside _poll_loop: under the watchdog
+        # backend that loop never runs at all, and the backfill is needed most
+        # on exactly the machines where watchdog works.
+        self._start_backfill()
+
         self._event(
             "watch",
             f"harness watching {self.config.drop_dir} ({self._backend} backend)",
@@ -103,8 +126,70 @@ class Harness:
         log.info("harness watching %s via %s", self.config.drop_dir, self._backend)
         return self.status()
 
+    def _start_backfill(self) -> None:
+        if self._backfill_thread is not None:
+            return
+        if self.config.embedding.provider == "none" or not self.db.vec_enabled:
+            return
+        self._backfill_thread = threading.Thread(
+            target=self._backfill_loop, name="socialmcp-backfill", daemon=True
+        )
+        self._backfill_thread.start()
+
+    def _backfill_loop(self) -> None:
+        """Keep embedding whatever is still dirty, whenever that is possible.
+
+        Reports progress through harness_events only when it actually does
+        something, so a machine without a provider stays silent instead of
+        filling the event log with failures the user cannot act on.
+        """
+        from .ingest import refresh_embeddings
+
+        delay = BACKFILL_INTERVAL_SECONDS
+        announced = False
+        while not self._stop.wait(delay):
+            try:
+                pending = self.db.scalar(
+                    "SELECT COUNT(*) FROM contacts WHERE embedding_dirty = 1"
+                ) or 0
+                if not pending:
+                    # Nothing to do. Idle slowly; a fresh import wakes this up
+                    # again by marking rows dirty, and it is cheap to notice.
+                    delay = BACKFILL_MAX_INTERVAL_SECONDS
+                    announced = False
+                    continue
+
+                written = refresh_embeddings(self.db, self.config, limit=BACKFILL_BATCH)
+                if written:
+                    if not announced:
+                        self._event(
+                            "embed",
+                            f"indexing {pending} contacts for meaning-based search",
+                            level="info",
+                            detail={"pending": pending},
+                        )
+                        announced = True
+                    log.info("backfilled %d embeddings, %d still pending", written, pending - written)
+                    delay = BACKFILL_INTERVAL_SECONDS
+                    if pending - written <= 0:
+                        self._event(
+                            "embed",
+                            "meaning-based search is ready",
+                            level="info",
+                        )
+                else:
+                    # No provider, or it refused. Back off steeply rather than
+                    # knock on a closed port every half minute for ever.
+                    delay = min(delay * 2, BACKFILL_MAX_INTERVAL_SECONDS)
+            except Exception as exc:  # a background thread must not die
+                log.warning("embedding backfill error: %s", exc)
+                delay = min(delay * 2, BACKFILL_MAX_INTERVAL_SECONDS)
+
     def stop(self) -> None:
         self._stop.set()
+        if self._backfill_thread is not None:
+            self._backfill_thread.join(timeout=5)
+            self._backfill_thread = None
         if self._observer is not None:
             try:
                 self._observer.stop()

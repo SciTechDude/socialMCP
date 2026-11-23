@@ -169,15 +169,28 @@ fi
 echo "==> Building $DMG"
 rm -f "$DMG"
 STAGE="$(mktemp -d)"
-cp -R "$APP" "$STAGE/"
-# A visible alias to /Applications is the whole install instruction.
-ln -s /Applications "$STAGE/Applications"
-# The terms sit beside the app, readable before it is even copied across.
 cp "$REPO/LICENSE" "$STAGE/LICENSE.txt"
 cp "$REPO/NOTICE" "$STAGE/README-AND-PRIVACY.txt"
-hdiutil create -volname "SocialMCP $VERSION" -srcfolder "$STAGE" \
-    -ov -format UDZO -quiet "$DMG"
+
+# The window the user actually sees. Dragging an app to Applications is a file
+# copy, so macOS reports no progress and announces nothing when it finishes —
+# a bare file listing therefore reads as "the download did nothing". The
+# background carries the instruction and the arrow; dmg_settings.py places the
+# icons at the two ends of that arrow.
+echo "==> Drawing the install window background"
+osascript -l JavaScript packaging/macos/dmg_background.js \
+    "$STAGE/background.png" "$VERSION" >/dev/null
+
+${ARCH_PREFIX[@]+"${ARCH_PREFIX[@]}"} "$PY_BIN" -m dmgbuild \
+    -s packaging/macos/dmg_settings.py \
+    -D app="$REPO/$APP" \
+    -D licence="$STAGE/LICENSE.txt" \
+    -D readme="$STAGE/README-AND-PRIVACY.txt" \
+    -D background="$STAGE/background.png" \
+    -D version="$VERSION" \
+    "SocialMCP $VERSION" "$DMG"
 rm -rf "$STAGE"
+[[ -f "$DMG" ]] || { echo "error: $DMG was not produced" >&2; exit 1; }
 
 if [[ "$SIGN" == "1" ]]; then
     : "${SOCIALMCP_NOTARY_PROFILE:?set SOCIALMCP_NOTARY_PROFILE}"

@@ -93,13 +93,21 @@ def ingest_path(
         existing = db.query_one("SELECT id, file_name, ingested_at FROM archives WHERE sha256 = ?", (digest,))
         if existing and not force:
             log.info("archive %s already ingested at %s", path.name, existing["ingested_at"])
-            return IngestStats(
+            stats = IngestStats(
                 source=source or "",
                 archive=path.name,
                 archive_id=existing["id"],
                 skipped_duplicate=True,
                 warnings=[f"identical archive already ingested on {existing['ingested_at']}"],
             )
+            # Filed away even though nothing was read. The drop folder means
+            # "waiting to be read", and a file already in the database is not
+            # waiting for anything — leaving it there made the folder fill up
+            # with exports that looked unprocessed, contradicting the note in
+            # the folder itself, and invited the user to drop it in again.
+            if config.archive_dir and _is_inside(path, config.drop_dir):
+                _move_processed(path, config, stats)
+            return stats
 
         with tempfile.TemporaryDirectory(prefix="socialmcp-") as tmp:
             root = Path(tmp) / "extracted"
