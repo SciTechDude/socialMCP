@@ -16,6 +16,7 @@ import os
 import plistlib
 import re
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -1833,14 +1834,18 @@ def test_load_flow_says_a_file_was_already_read_instead_of_claiming_it_loaded(
 
 
 def _dmg_settings():
-    """Load the dmgbuild settings file as a module, without dmgbuild."""
-    import importlib.util
+    """Read the dmgbuild settings file, without dmgbuild and without caching.
 
+    Deliberately `exec` on the source text rather than importlib: a
+    .pyc written next to the file is reused when source and cache share an
+    mtime to the second, so editing this file and re-running the tests in
+    quick succession silently tested the previous contents. That cost real
+    time to spot, because the failure looks like the edit not applying.
+    """
     path = REPO / "packaging" / "macos" / "dmg_settings.py"
-    spec = importlib.util.spec_from_file_location("dmg_settings", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    namespace: dict[str, object] = {"__file__": str(path), "defines": {}}
+    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), namespace)
+    return types.SimpleNamespace(**namespace)
 
 
 def test_the_install_window_background_matches_the_window_it_is_shown_in():
@@ -1878,9 +1883,14 @@ def test_the_arrow_points_from_the_app_to_the_applications_folder():
     assert app_y == apps_y, "both icons should be at the same height"
 
     height = settings.window_rect[1][1]
-    # The script works in a bottom-left origin; the icons are placed from the
-    # top. Same line on screen means these two must sum to the window height.
-    arrow_y = int(re.search(r"const arrowY = H - (\d+);", script).group(1))
+    # The script works in a bottom-left origin and the icons are placed from
+    # the top, so the arrow is drawn at `H - ICON_ROW1_TOP`. Checking the
+    # expression rather than a number is the point: it is what keeps the two
+    # files from drifting apart.
+    assert "const arrowY = H - ICON_ROW1_TOP;" in script, (
+        "the arrow should be pinned to the first icon row, not a loose number"
+    )
+    arrow_y = _background_constants()["ICON_ROW1_TOP"]
     assert arrow_y == app_y, (
         f"arrow drawn at {arrow_y} from the top, icons at {app_y}"
     )
@@ -1952,3 +1962,114 @@ def test_the_disk_image_is_laid_out_without_driving_finder():
     # Build-time only: it must not reach the shipped application.
     runtime = pyproject.split("dependencies = [", 1)[1].split("]", 1)[0]
     assert "dmgbuild" not in runtime, "dmgbuild is not a runtime dependency"
+
+
+def _background_constants():
+    """The vertical positions declared in the background script, by name."""
+    script = (REPO / "packaging" / "macos" / "dmg_background.js").read_text(encoding="utf-8")
+    return {
+        name: int(value)
+        for name, value in re.findall(r"const ([A-Z][A-Z0-9_]+) = (\d+);", script)
+    }
+
+
+def test_the_two_icon_rows_clear_the_instruction_text():
+    """Icons must not collide with the words, which is what shipped first.
+
+    An icon is drawn centred on its position with its filename below, so a
+    row is taller than `icon_size`. At a 400-point window height the second
+    row reached y=394 and overlapped the instruction — found by opening the
+    image, not by any check, which is why this test exists.
+    """
+    settings = _dmg_settings()
+    constants = _background_constants()
+    height = settings.window_rect[1][1]
+    half = settings.icon_size / 2
+    label = 18  # a filename under the icon, at the 13pt text_size set above
+
+    row1 = constants["ICON_ROW1_TOP"]
+    row2 = constants["ICON_ROW2_TOP"]
+    headline = constants["HEADLINE_TOP"]
+    subtitle = constants["SUBTITLE_TOP"]
+
+    assert (row1, row2) == (settings.ICON_ROW1_TOP, settings.ICON_ROW2_TOP), (
+        "the background and the icon layout disagree about where the rows are"
+    )
+
+    row1_bottom = row1 + half + label
+    assert row1_bottom < headline, (
+        f"first row reaches {row1_bottom}, headline starts at {headline}"
+    )
+
+    subtitle_bottom = subtitle + 16
+    row2_top = row2 - half
+    assert subtitle_bottom < row2_top, (
+        f"text ends at {subtitle_bottom}, second row starts at {row2_top}"
+    )
+
+    row2_bottom = row2 + half + label
+    assert row2_bottom <= height, (
+        f"second row reaches {row2_bottom}, past the {height}-point window"
+    )
+
+    # The version label sits in a corner, clear of the first row.
+    assert constants["VERSION_TOP"] + 14 < row1 - half, "version overlaps the icons"
+
+
+@pytest.mark.parametrize(
+    ("provider_up", "expect", "forbid"),
+    [
+        (False, "match words literally", "Indexing"),
+        (True, "Indexing", "literally"),
+    ],
+)
+def test_the_import_summary_says_whether_search_can_match_meaning(
+    monkeypatch, tmp_path, provider_up, expect, forbid
+):
+    """Told at the moment it matters: right before the first question.
+
+    Without an index, "who works on robotics" matches the word and misses
+    everyone whose title says "autonomy". Nothing looks broken, so nobody
+    asks — which is exactly why the app has to volunteer it.
+    """
+    import zipfile
+
+    app = _load_app_main()
+
+    home = tmp_path / "home"
+    downloads = home / "Downloads"
+    downloads.mkdir(parents=True)
+    monkeypatch.setattr(app.Path, "home", staticmethod(lambda: home))
+
+    export = downloads / "Complete_LinkedInDataExport_11-15-2026.zip"
+    fixtures = Path(__file__).resolve().parent / "fixtures" / "linkedin"
+    with zipfile.ZipFile(export, "w") as archive:
+        for csv in fixtures.glob("*.csv"):
+            archive.write(csv, csv.name)
+
+    said: list[str] = []
+    monkeypatch.setattr(app, "dialog", lambda message, **_k: said.append(message) or "OK")
+    monkeypatch.setattr(app, "embedding_available", lambda _config: provider_up)
+
+    import sys as _sys
+
+    module = type(_sys)("ui")
+    module.choose_export = lambda _start=None: export
+    module.archive_suffixes = lambda *_a, **_k: (".zip",)
+    monkeypatch.setitem(_sys.modules, "ui", module)
+
+    from socialmcp.config import Config
+
+    appdata = tmp_path / "appdata"
+    config = Config(home=appdata, drop_dir=appdata / "drop-archive")
+    config.ensure_dirs()
+
+    assert app.load_flow(config, config.drop_dir / "linkedin") == 0, said
+    message = "\n".join(said)
+
+    assert expect in message, f"expected {expect!r} in: {message!r}"
+    assert forbid not in message, f"did not expect {forbid!r} in: {message!r}"
+    # Either way, never a bare instruction to run something by hand.
+    assert "reindex" not in message.lower(), (
+        "indexing is automatic; the user should not be told to trigger it"
+    )

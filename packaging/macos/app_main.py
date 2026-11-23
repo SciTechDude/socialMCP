@@ -1095,10 +1095,15 @@ def load_flow(config, drop: Path) -> int:
         db = open_database(config)
         result = ingest_path(db, config, staged)
         report.done(f"Read {target.name}")
-        return result, db.scalar("select count(*) from contacts")
+        # Dirty rows are contacts that could not be embedded, which is what
+        # happens when no embedding provider is running. Reported here because
+        # the next thing a user does is ask their assistant a question, and
+        # that is where the difference shows up.
+        pending = db.scalar("select count(*) from contacts where embedding_dirty = 1") or 0
+        return result, db.scalar("select count(*) from contacts"), pending
 
     try:
-        result, contacts = run_with_progress(
+        result, contacts, pending = run_with_progress(
             work, steps=1, intro=f"Reading {target.name} — this stays on your Mac."
         )
     except Exception as exc:  # shown to the user, not swallowed
@@ -1129,16 +1134,40 @@ def load_flow(config, drop: Path) -> int:
         )
         return 0
 
-    trace(f"load: done, {contacts} contacts")
+    trace(f"load: done, {contacts} contacts, {pending} awaiting indexing")
     dialog(
         f"Loaded {target.name}.\n\n"
-        f"Your network now has {contacts} people.\n\n"
+        f"Your network now has {contacts} people.\n"
+        f"{_search_quality_note(config, pending)}\n"
         "Quit and reopen your AI app, then ask it:\n"
         '  "what can you do with my network?"\n\n'
         "Next time: put a newer export in Downloads and open SocialMCP again.",
         buttons=("OK",),
     )
     return 0
+
+
+def _search_quality_note(config, pending: int) -> str:
+    """One line on whether search can match meaning, or only words.
+
+    Worth saying out loud because the difference is invisible: without an
+    index, a search for "people who work on robotics" quietly matches the
+    word "robotics" and misses everyone whose title says "autonomy". Nothing
+    looks broken, so nobody asks.
+    """
+    if not pending:
+        return ""
+    if embedding_available(config):
+        # The server indexes in the background, so this resolves itself.
+        return (
+            f"\nIndexing {pending} of them for meaning-based search — that runs\n"
+            "in the background and needs nothing from you.\n"
+        )
+    return (
+        "\nSearches will match words literally for now. For search by meaning,\n"
+        "install Ollama (free, runs on this Mac, uploads nothing) — SocialMCP\n"
+        "then indexes your contacts on its own, with nothing to run.\n"
+    )
 
 
 def _describe_data(config) -> str:
