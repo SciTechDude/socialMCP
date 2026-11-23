@@ -3,11 +3,11 @@
 **A local-first personal CRM for your professional network, delivered entirely as an MCP server.**
 
 > **Early release.** This is new software with one maintainer and very few
-> users so far. The downloads are marked as pre-releases while it is being
-> hardened: expect rough edges, and please
-> [report anything that breaks](#tell-me-what-broke) — your data is never at
-> risk (SocialMCP only reads the export you give it), but the experience
-> around it is still being smoothed out.
+> users so far — version 0.2.0, well short of 1.0, and the version number is
+> the honest signal rather than a label on the download. Expect rough edges,
+> and please [report anything that breaks](#tell-me-what-broke). Your data is
+> never at risk (SocialMCP only reads the export you give it), but the
+> experience around it is still being smoothed out.
 
 No scraping. No cookies. No browser automation. No web UI. You drop the data
 export that LinkedIn already owes you into a folder, and **any MCP client**
@@ -125,12 +125,10 @@ no crash reports. That is the point, and it also means I have no idea whether
 it worked for you. A download count is the only thing I can see, and it cannot
 tell the difference between "works beautifully" and "crashed on launch".
 
-**Please try the [newest release](https://github.com/SciTechDude/socialMCP/releases)
+**Please try the [newest release](https://github.com/SciTechDude/socialMCP/releases/latest)
 first** — it is a one-person project and only the current version is
 supported. Older releases stay downloadable so a regression can be traced, but
-most problems are already fixed in the newest build. (That link goes to the
-full list rather than `/releases/latest`, because GitHub excludes pre-releases
-from "latest" and the newest build is often a pre-release.)
+most problems are already fixed in the newest build.
 
 Then, if anything failed, confused you, or parsed your export wrong:
 [open an issue](https://github.com/SciTechDude/socialMCP/issues), or ask in
